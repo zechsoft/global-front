@@ -158,7 +158,7 @@ export default function SupplierInfoView() {
   const [formData, setFormData] = useState({});
 
   const isAdmin = user?.role === 'admin';
-  const apiUrl = "https://globalindiabackendnew.onrender.com/api";
+  const apiUrl = "http://localhost:8000/api";
 
   // Initialize form data
   const initializeFormData = () => {

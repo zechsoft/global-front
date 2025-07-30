@@ -56,7 +56,7 @@ export const AuthProvider = ({ children }) => {
       
       console.log('Attempting login with:', { email, passwordLength: password.length })
       
-      const response = await fetch("https://globalindiabackendnew.onrender.com/api/login", {
+      const response = await fetch("http://localhost:8000/api/login", {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -184,7 +184,7 @@ export const AuthProvider = ({ children }) => {
   const logout = async () => {
     try {
       // Call logout API endpoint to invalidate server-side session
-      await fetch("https://globalindiabackendnew.onrender.com/api/logout", { 
+      await fetch("http://localhost:8000/api/logout", { 
         credentials: 'include',
         method: 'POST'
       })

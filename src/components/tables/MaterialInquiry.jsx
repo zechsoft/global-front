@@ -9,7 +9,7 @@ const getUser = () => {
 }
 
 // Base URL for the backend API
-const API_BASE_URL = "https://globalindiabackendnew.onrender.com"
+const API_BASE_URL = "http://localhost:8000"
 
 // Default table headers configuration
 const DEFAULT_HEADERS = [

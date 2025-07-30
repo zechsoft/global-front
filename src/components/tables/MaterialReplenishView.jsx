@@ -194,7 +194,7 @@ export default function MaterialReplenishView() {
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
   const isAdmin = user?.role === 'admin';
-  const apiUrl = "https://globalindiabackendnew.onrender.com/api";
+  const apiUrl = "http://localhost:8000/api";
 
   const showToast = (message, type = 'success') => {
     setToast({ show: true, message, type });

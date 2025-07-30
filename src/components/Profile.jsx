@@ -53,7 +53,7 @@ export default function Profile() {
   const loadUserProfile = async () => {
     try {
       setIsLoading(true)
-      const response = await fetch("https://globalindiabackendnew.onrender.com/api/get-user-profile", {
+      const response = await fetch("http://localhost:8000/api/get-user-profile", {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -81,7 +81,7 @@ export default function Profile() {
           // Update profile image with proper URL
           if (userData.profileImage) {
             const fullImageUrl = userData.profileImage.startsWith('/uploads') ? 
-              `https://globalindiabackendnew.onrender.com${userData.profileImage}` : 
+              `http://localhost:8000${userData.profileImage}` : 
               userData.profileImage
             setProfileImage(fullImageUrl)
             setImageKey(Date.now())
@@ -97,7 +97,7 @@ export default function Profile() {
       // Fallback to user data from context
       if (user.profileImage) {
         const fullImageUrl = user.profileImage.startsWith('/uploads') ? 
-          `https://globalindiabackendnew.onrender.com${user.profileImage}` : 
+          `http://localhost:8000${user.profileImage}` : 
           user.profileImage
         setProfileImage(fullImageUrl)
       }
@@ -108,7 +108,7 @@ export default function Profile() {
 
   const loadUserProjects = async () => {
     try {
-      const response = await fetch("https://globalindiabackendnew.onrender.com/api/get-projects", {
+      const response = await fetch("http://localhost:8000/api/get-projects", {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -126,7 +126,7 @@ export default function Profile() {
             ...project,
             id: project._id || project.id,
             image: project.image && project.image.startsWith('/uploads') ? 
-              `https://globalindiabackendnew.onrender.com${project.image}` : 
+              `http://localhost:8000${project.image}` : 
               (project.image || '/api/placeholder/400/300'),
             status: project.status || 'Planning'
           }))
@@ -158,7 +158,7 @@ export default function Profile() {
   const saveProfileInfo = async () => {
     try {
       setIsLoading(true)
-      const response = await fetch("https://globalindiabackendnew.onrender.com/api/edit-user", {
+      const response = await fetch("http://localhost:8000/api/edit-user", {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -213,7 +213,7 @@ export default function Profile() {
         formData.append("email", profileInfo.email)
         
         setIsLoading(true)
-        const response = await fetch("https://globalindiabackendnew.onrender.com/api/upload-profile-image", {
+        const response = await fetch("http://localhost:8000/api/upload-profile-image", {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${getAuthToken()}`
@@ -235,7 +235,7 @@ export default function Profile() {
           
           // Update profile image state
           const fullImageUrl = data.imageUrl.startsWith('/uploads') ? 
-            `https://globalindiabackendnew.onrender.com${data.imageUrl}` : 
+            `http://localhost:8000${data.imageUrl}` : 
             data.imageUrl
           
           setProfileImage(fullImageUrl)
@@ -285,7 +285,7 @@ export default function Profile() {
 
       if (selectedProject.id) {
         // Update existing project
-        response = await fetch("https://globalindiabackendnew.onrender.com/api/update-project", {
+        response = await fetch("http://localhost:8000/api/update-project", {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -304,7 +304,7 @@ export default function Profile() {
         })
       } else {
         // Add new project
-        response = await fetch("https://globalindiabackendnew.onrender.com/api/add-project", {
+        response = await fetch("http://localhost:8000/api/add-project", {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -358,7 +358,7 @@ export default function Profile() {
   const handleDeleteProject = async (projectId) => {
     try {
       setIsLoading(true)
-      const response = await fetch("https://globalindiabackendnew.onrender.com/api/delete-project", {
+      const response = await fetch("http://localhost:8000/api/delete-project", {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

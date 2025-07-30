@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { Plus, Search, Filter, Edit, Trash2, AlertTriangle, Eye, Settings, X, Check, ChevronUp, ChevronDown } from 'lucide-react'
 // API base URL for the deployed backend
-const API_BASE_URL = "https://globalindiabackendnew.onrender.com"
+const API_BASE_URL = "http://localhost:8000"
 
 // API helper function
 const apiCall = async (endpoint, method = 'GET', data = null) => {

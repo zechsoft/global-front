@@ -80,23 +80,52 @@ export default function AdminLayout({ children }) {
   }
 
   return (
-    <div 
-      className="min-h-screen flex relative overflow-hidden" 
-      style={{
-        background: `
-          linear-gradient(135deg, #000000ff 0%, #357ABD 25%, #2E5F8A 50%, #1E3A5F 75%, #0F1419 100%),
-          radial-gradient(ellipse at top right, rgba(255,255,255,0.1) 0%, transparent 50%),
-          radial-gradient(ellipse at bottom left, rgba(255,255,255,0.05) 0%, transparent 50%)
-        `,  
-        backgroundAttachment: 'fixed'
-      }}
-    >
-      {/* Decorative elements */}
-      <div className="absolute inset-0 opacity-10 pointer-events-none">
+    <div className="min-h-screen flex relative overflow-hidden bg-gray-100">
+      {/* Background with gradient - only in top half */}
+      <div 
+        className="absolute top-0 left-0 right-0 h-1/2 overflow-hidden pointer-events-none"
+        style={{
+         background: `
+            linear-gradient(135deg, #61c6eeff 0%, rgba(57, 124, 223, 1)5%, #3B7BC8 50%, #2E5F8A 75%, #1E3A5F 100%),
+            radial-gradient(ellipse at top right, rgba(255,255,255,0.15) 0%, transparent 50%),
+            radial-gradient(ellipse at bottom left, rgba(255,255,255,0.1) 0%, transparent 50%)
+          `
+        }}
+      >
+        {/* Decorative wave patterns */}
+        <div className="absolute inset-0 opacity-10">
+          <svg
+            className="absolute top-0 right-0 w-full h-full"
+            viewBox="0 0 1200 400"
+            preserveAspectRatio="xMidYMid slice"
+          >
+            <defs>
+              <pattern id="waves" x="0" y="0" width="200" height="100" patternUnits="userSpaceOnUse">
+                <path
+                  d="M0,50 Q50,0 100,50 T200,50"
+                  stroke="rgba(255,255,255,0.3)"
+                  strokeWidth="1"
+                  fill="none"
+                />
+                <path
+                  d="M0,60 Q50,10 100,60 T200,60"
+                  stroke="rgba(255,255,255,0.2)"
+                  strokeWidth="1"
+                  fill="none"
+                />
+              </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#waves)" />
+          </svg>
+        </div>
+
+        {/* Additional decorative elements - only in top half */}
         <div className="absolute top-10 right-20 w-32 h-32 rounded-full bg-white opacity-5"></div>
-        <div className="absolute bottom-20 left-10 w-24 h-24 rounded-full bg-white opacity-5"></div>
         <div className="absolute top-1/3 right-1/4 w-16 h-16 rounded-full bg-white opacity-5"></div>
       </div>
+
+      {/* Bottom half decorative element */}
+      <div className="absolute bottom-20 left-10 w-24 h-24 rounded-full bg-gray-300 opacity-10 pointer-events-none"></div>
 
       {/* Hover trigger area for desktop */}
       <div

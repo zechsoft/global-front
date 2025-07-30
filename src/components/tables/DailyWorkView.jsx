@@ -135,7 +135,7 @@ export default function DailyWorkView() {
   const [notification, setNotification] = useState({ show: false, message: '', type: '' });
 
   const isAdmin = user?.role === 'admin';
-  const apiUrl = "https://globalindiabackendnew.onrender.com/api";
+  const apiUrl = "http://localhost:8000/api";
 
   // Show notification
   const showNotification = (message, type = 'info') => {

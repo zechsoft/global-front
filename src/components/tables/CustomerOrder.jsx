@@ -108,7 +108,7 @@ export default function CustomerOrder() {
   const [isFocused, setIsFocused] = useState(false)
 
   // API base URL
-  const API_BASE_URL = "https://globalindiabackendnew.onrender.com"
+  const API_BASE_URL = "http://localhost:8000"
 
   const showNotification = (title, description, status) => {
     setNotification({ title, description, status })

@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 
 // API base URL
-const API_BASE_URL = "https://globalindiabackendnew.onrender.com";
+const API_BASE_URL = "http://localhost:8000";
 
 const CustomisedTable = ({ table }) => {
   const [tables, setTables] = useState([]);
