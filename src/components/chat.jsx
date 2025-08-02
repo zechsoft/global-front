@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import {
@@ -6,6 +6,8 @@ import {
   UserPlus, Settings, Archive, MessageSquare, Users, Clock, CheckCheck,
   Image, File, X, LogOut, Hash, AlertCircle, Loader2, Shield
 } from 'lucide-react';
+
+const API_BASE = 'http://localhost:8000/api';
 
 export default function ChatPage() {
   const { authenticatedApiCall, user, logout } = useAuth();
@@ -39,7 +41,7 @@ export default function ChatPage() {
   const [chatRooms, setChatRooms] = useState([]);
   const [clients, setClients] = useState([]);
   const [admins, setAdmins] = useState([]);
-  const [allUsers, setAllUsers] = useState([]); // ADDED: New state for all users
+  const [allUsers, setAllUsers] = useState([]);
   const [currentConversation, setCurrentConversation] = useState(null);
   const [currentRoom, setCurrentRoom] = useState(null);
 
@@ -50,53 +52,57 @@ export default function ChatPage() {
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const loadingRef = useRef(false);
+  const initialLoadDoneRef = useRef(false);
 
-  const API_BASE = 'http://localhost:8000/api';
-
-  // Get current user with better error handling
-  const getCurrentUser = useCallback(() => {
+  // FIXED: Stable current user with useMemo
+  const currentUser = useMemo(() => {
     try {
-      console.log('getCurrentUser - Context user:', user);
+      console.log('Computing currentUser - Context user:', user);
       
       if (user && (user._id || user.id)) {
-        const currentUser = {
+        const userData = {
           id: user._id || user.id,
           email: user.Email || user.email,
           name: user.userName || user.name,
           role: user.role
         };
-        console.log('getCurrentUser - Processed user:', currentUser);
-        return currentUser;
+        console.log('currentUser - Processed user:', userData);
+        return userData;
       }
 
       const storedUser = localStorage.getItem("user") || sessionStorage.getItem("user");
       if (storedUser) {
-        const parsedUser = JSON.parse(storedUser);
-        if (parsedUser && (parsedUser._id || parsedUser.id)) {
-          const currentUser = {
-            id: parsedUser._id || parsedUser.id,
-            email: parsedUser.Email || parsedUser.email,
-            name: parsedUser.userName || parsedUser.name,
-            role: parsedUser.role
-          };
-          console.log('getCurrentUser - From storage:', currentUser);
-          return currentUser;
+        try {
+          const parsedUser = JSON.parse(storedUser);
+          if (parsedUser && (parsedUser._id || parsedUser.id)) {
+            const userData = {
+              id: parsedUser._id || parsedUser.id,
+              email: parsedUser.Email || parsedUser.email,
+              name: parsedUser.userName || parsedUser.name,
+              role: parsedUser.role
+            };
+            console.log('currentUser - From storage:', userData);
+            return userData;
+          }
+        } catch (e) {
+          console.error('Error parsing stored user:', e);
         }
       }
 
-      console.error('getCurrentUser - No valid user found');
+      console.error('currentUser - No valid user found');
       return null;
     } catch (error) {
-      console.error('getCurrentUser - Error:', error);
+      console.error('currentUser - Error:', error);
       return null;
     }
-  }, [user]);
+  }, [user]); // Only depend on user from context
 
-  const currentUser = getCurrentUser();
-
-  // Fixed API calls with better error handling
+  // FIXED: Stable API call functions with proper dependencies
   const loadConversations = useCallback(async () => {
-    if (loadingRef.current || !currentUser) return;
+    if (!currentUser?.id || !authenticatedApiCall) {
+      console.log('loadConversations - Missing user or apiCall');
+      return;
+    }
 
     try {
       console.log('Loading conversations...');
@@ -106,11 +112,15 @@ export default function ChatPage() {
     } catch (error) {
       console.error('Load conversations error:', error);
       setError('Failed to load conversations');
+      setConversations([]);
     }
-  }, [authenticatedApiCall, currentUser]);
+  }, [currentUser?.id, authenticatedApiCall]);
 
   const loadChatRooms = useCallback(async () => {
-    if (loadingRef.current || !currentUser) return;
+    if (!currentUser?.id || !authenticatedApiCall) {
+      console.log('loadChatRooms - Missing user or apiCall');
+      return;
+    }
 
     try {
       console.log('Loading chat rooms...');
@@ -120,11 +130,15 @@ export default function ChatPage() {
     } catch (error) {
       console.error('Load chat rooms error:', error);
       setError('Failed to load chat rooms');
+      setChatRooms([]);
     }
-  }, [authenticatedApiCall, currentUser]);
+  }, [currentUser?.id, authenticatedApiCall]);
 
   const loadClients = useCallback(async () => {
-    if (loadingRef.current || !currentUser) return;
+    if (!currentUser?.id || !authenticatedApiCall) {
+      console.log('loadClients - Missing user or apiCall');
+      return;
+    }
 
     try {
       console.log('Loading clients...');
@@ -135,10 +149,13 @@ export default function ChatPage() {
       console.error('Load clients error:', error);
       setClients([]);
     }
-  }, [authenticatedApiCall, currentUser]);
+  }, [currentUser?.id, authenticatedApiCall]);
 
   const loadAdmins = useCallback(async () => {
-    if (loadingRef.current || !currentUser) return;
+    if (!currentUser?.id || !authenticatedApiCall) {
+      console.log('loadAdmins - Missing user or apiCall');
+      return;
+    }
 
     try {
       console.log('Loading admins...');
@@ -149,11 +166,13 @@ export default function ChatPage() {
       console.error('Load admins error:', error);
       setAdmins([]);
     }
-  }, [authenticatedApiCall, currentUser]);
+  }, [currentUser?.id, authenticatedApiCall]);
 
-  // ADDED: New function to load all users
   const loadAllUsers = useCallback(async () => {
-    if (loadingRef.current || !currentUser) return;
+    if (!currentUser?.id || !authenticatedApiCall) {
+      console.log('loadAllUsers - Missing user or apiCall');
+      return;
+    }
 
     try {
       console.log('Loading all users...');
@@ -164,22 +183,90 @@ export default function ChatPage() {
       console.error('Load all users error:', error);
       setAllUsers([]);
     }
-  }, [authenticatedApiCall, currentUser]);
+  }, [currentUser?.id, authenticatedApiCall]);
 
-  // Socket event handlers with fixed message routing
+  // FIXED: Single effect for initial data loading with proper guards
   useEffect(() => {
-    if (!socket || !currentUser) return;
+    const loadInitialData = async () => {
+      // Prevent multiple simultaneous loads
+      if (loadingRef.current || initialLoadDoneRef.current || !currentUser?.id || !authenticatedApiCall) {
+        console.log('loadInitialData - Skipping:', {
+          loading: loadingRef.current,
+          done: initialLoadDoneRef.current,
+          hasUser: !!currentUser?.id,
+          hasApiCall: !!authenticatedApiCall
+        });
+        return;
+      }
+
+      console.log('Starting initial data load for user:', currentUser.id);
+      loadingRef.current = true;
+      setInitialLoading(true);
+      setError('');
+
+      try {
+        // Load all data in parallel
+        await Promise.allSettled([
+          loadConversations(),
+          loadChatRooms(),
+          loadClients(),
+          loadAdmins(),
+          loadAllUsers()
+        ]);
+
+        console.log('Initial data load completed');
+        initialLoadDoneRef.current = true;
+      } catch (error) {
+        console.error('Failed to load initial data:', error);
+        setError('Failed to load initial data: ' + error.message);
+      } finally {
+        setInitialLoading(false);
+        loadingRef.current = false;
+      }
+    };
+
+    loadInitialData();
+  }, [currentUser?.id, authenticatedApiCall, loadConversations, loadChatRooms, loadClients, loadAdmins, loadAllUsers]);
+
+  // FIXED: Separate effect for socket reconnection data refresh
+  useEffect(() => {
+    if (isConnected && currentUser?.id && initialLoadDoneRef.current && !loadingRef.current) {
+      console.log('Socket reconnected, refreshing critical data...');
+      Promise.allSettled([
+        loadConversations(),
+        loadChatRooms()
+      ]).catch(error => {
+        console.error('Error refreshing data on socket reconnect:', error);
+      });
+    }
+  }, [isConnected, currentUser?.id, loadConversations, loadChatRooms]);
+
+  // FIXED: Socket event handlers with stable dependencies
+  useEffect(() => {
+    if (!socket || !currentUser?.id) return;
 
     const handleReceivePrivateMessage = (data) => {
       console.log('Received private message:', data);
       
-      // Only update if this is the current conversation and user is participant
-      if (currentConversation && data.conversationId === currentConversation._id) {
-        setCurrentConversation(prev => ({
+      // Remove any temporary message with same tempId first
+      if (data.tempId) {
+        setCurrentConversation(prev => {
+          if (!prev || prev._id !== data.conversationId) return prev;
+          return {
+            ...prev,
+            messages: prev.messages.filter(msg => msg._id !== data.tempId)
+          };
+        });
+      }
+
+      // Only update if this is the current conversation
+      setCurrentConversation(prev => {
+        if (!prev || prev._id !== data.conversationId) return prev;
+        return {
           ...prev,
           messages: [...(prev.messages || []), data.message]
-        }));
-      }
+        };
+      });
 
       // Update conversations list
       setConversations(prev => prev.map(conv => {
@@ -196,13 +283,25 @@ export default function ChatPage() {
     const handleReceiveRoomMessage = (data) => {
       console.log('Received room message:', data);
       
-      // Only update if this is the current room and user is participant
-      if (currentRoom && data.roomId === currentRoom._id) {
-        setCurrentRoom(prev => ({
+      // Remove any temporary message with same tempId first
+      if (data.tempId) {
+        setCurrentRoom(prev => {
+          if (!prev || prev._id !== data.roomId) return prev;
+          return {
+            ...prev,
+            messages: prev.messages.filter(msg => msg._id !== data.tempId)
+          };
+        });
+      }
+
+      // Only update if this is the current room
+      setCurrentRoom(prev => {
+        if (!prev || prev._id !== data.roomId) return prev;
+        return {
           ...prev,
           messages: [...(prev.messages || []), data.message]
-        }));
-      }
+        };
+      });
     };
 
     const handleConversationUpdated = (updatedConversation) => {
@@ -220,7 +319,6 @@ export default function ChatPage() {
     };
 
     const handleUserTyping = (data) => {
-      // Only show typing indicator for current chat
       const chatId = chatType === 'private' ? currentConversation?._id : currentRoom?._id;
       const typingChatId = data.conversationId || data.roomId;
       
@@ -261,20 +359,20 @@ export default function ChatPage() {
       socket.off('room-updated', handleRoomUpdated);
       socket.off('user-typing', handleUserTyping);
     };
-  }, [socket, currentConversation, currentRoom, chatType, currentUser]);
+  }, [socket, currentUser?.id, chatType, currentConversation?._id, currentRoom?._id]);
 
   // Join rooms when chat is selected
   useEffect(() => {
-    if (!socket || !selectedChat || !currentUser) return;
+    if (!socket || !selectedChat || !currentUser?.id) return;
 
     if (chatType === 'private' && currentConversation) {
       console.log('Joining conversation:', currentConversation._id);
       socket.emit('join-conversation', currentConversation._id);
-      markMessagesAsRead(currentConversation._id);
+      markMessagesAsRead && markMessagesAsRead(currentConversation._id);
     } else if (chatType === 'room' && currentRoom) {
       console.log('Joining room:', currentRoom._id);
       socket.emit('join-room', currentRoom._id);
-      markMessagesAsRead(currentRoom._id, true);
+      markMessagesAsRead && markMessagesAsRead(currentRoom._id, true);
     }
 
     return () => {
@@ -284,45 +382,10 @@ export default function ChatPage() {
         socket.emit('leave-room', currentRoom._id);
       }
     };
-  }, [socket, selectedChat, chatType, currentConversation, currentRoom, markMessagesAsRead, currentUser]);
+  }, [socket, selectedChat, chatType, currentConversation?._id, currentRoom?._id, markMessagesAsRead, currentUser?.id]);
 
-  // Load initial data
-  useEffect(() => {
-    const loadInitialData = async () => {
-      if (loadingRef.current || !currentUser) return;
-
-      try {
-        setInitialLoading(true);
-        setError('');
-        loadingRef.current = true;
-
-        console.log('Loading initial data for user:', currentUser);
-
-        await Promise.all([
-          loadConversations(),
-          loadChatRooms(),
-          loadClients(),
-          loadAdmins(),
-          loadAllUsers() // ADDED: Load all users
-        ]);
-
-        console.log('Initial data loaded successfully');
-      } catch (error) {
-        console.error('Failed to load initial data:', error);
-        setError('Failed to load initial data: ' + error.message);
-      } finally {
-        setInitialLoading(false);
-        loadingRef.current = false;
-      }
-    };
-
-    if (currentUser && initialLoading) {
-      loadInitialData();
-    }
-  }, [currentUser, loadConversations, loadChatRooms, loadClients, loadAdmins, loadAllUsers, initialLoading]);
-
-  const selectPrivateChat = async (conversation) => {
-    if (!currentUser) {
+  const selectPrivateChat = useCallback(async (conversation) => {
+    if (!currentUser?.id) {
       setError('User not authenticated');
       return;
     }
@@ -344,9 +407,14 @@ export default function ChatPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentUser?.id, authenticatedApiCall]);
 
-  const selectChatRoom = async (room) => {
+  const selectChatRoom = useCallback(async (room) => {
+    if (!currentUser?.id) {
+      setError('User not authenticated');
+      return;
+    }
+
     setLoading(true);
     setError('');
     try {
@@ -362,14 +430,14 @@ export default function ChatPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentUser?.id, authenticatedApiCall]);
 
-  const startNewConversation = async (userId) => {
+  const startNewConversation = useCallback(async (userId) => {
     try {
       setError('');
       setLoading(true);
 
-      if (!currentUser || !currentUser.id) {
+      if (!currentUser?.id) {
         throw new Error('User not authenticated');
       }
 
@@ -385,23 +453,24 @@ export default function ChatPage() {
       setChatType('private');
       setShowNewChatDialog(false);
 
-      await loadConversations();
+      // Refresh conversations
+      loadConversations();
     } catch (error) {
       setError('Failed to start conversation: ' + error.message);
       console.error('Start new conversation error:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentUser?.id, authenticatedApiCall, loadConversations]);
 
-  const createNewRoom = async () => {
+  const createNewRoom = useCallback(async () => {
     if (!newRoomName.trim()) return;
 
     try {
       setError('');
       setLoading(true);
 
-      if (!currentUser || !currentUser.id) {
+      if (!currentUser?.id) {
         throw new Error('User not authenticated');
       }
 
@@ -418,9 +487,11 @@ export default function ChatPage() {
       setNewRoomDescription('');
       setShowNewRoomDialog(false);
 
-      await loadChatRooms();
+      // Refresh chat rooms
+      loadChatRooms();
+      
       if (response.chatRoom) {
-        await selectChatRoom(response.chatRoom);
+        selectChatRoom(response.chatRoom);
       }
     } catch (error) {
       setError('Failed to create room: ' + error.message);
@@ -428,32 +499,32 @@ export default function ChatPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [newRoomName, newRoomDescription, currentUser?.id, authenticatedApiCall, loadChatRooms, selectChatRoom]);
 
-  const joinRoom = async (roomId) => {
+  const joinRoom = useCallback(async (roomId) => {
     try {
       setError('');
       console.log('Joining room:', roomId);
 
       await authenticatedApiCall(`${API_BASE}/chat/rooms/${roomId}/join`, { method: 'POST' });
-      await loadChatRooms();
+      loadChatRooms();
 
       if (currentRoom && currentRoom._id === roomId) {
-        await selectChatRoom({ _id: roomId });
+        selectChatRoom({ _id: roomId });
       }
     } catch (error) {
       setError('Failed to join room: ' + error.message);
       console.error('Join room error:', error);
     }
-  };
+  }, [authenticatedApiCall, loadChatRooms, currentRoom, selectChatRoom]);
 
-  const leaveRoom = async (roomId) => {
+  const leaveRoom = useCallback(async (roomId) => {
     try {
       setError('');
       console.log('Leaving room:', roomId);
 
       await authenticatedApiCall(`${API_BASE}/chat/rooms/${roomId}/leave`, { method: 'POST' });
-      await loadChatRooms();
+      loadChatRooms();
 
       if (currentRoom && currentRoom._id === roomId) {
         setCurrentRoom(null);
@@ -463,13 +534,14 @@ export default function ChatPage() {
       setError('Failed to leave room: ' + error.message);
       console.error('Leave room error:', error);
     }
-  };
+  }, [authenticatedApiCall, loadChatRooms, currentRoom]);
 
-  const sendMessage = async () => {
-    if (!message.trim() || !currentUser) return;
+  // FIXED: Better message sending with proper temp message handling
+  const sendMessage = useCallback(async () => {
+    if (!message.trim() || !currentUser?.id) return;
 
     const messageText = message;
-    const tempId = `temp-${Date.now()}`;
+    const tempId = `temp-${Date.now()}-${Math.random()}`;
     setMessage('');
 
     const tempMessage = {
@@ -488,6 +560,7 @@ export default function ChatPage() {
       setError('');
 
       if (chatType === 'private' && currentConversation) {
+        // Add temp message immediately
         setCurrentConversation(prev => ({
           ...prev,
           messages: [...(prev.messages || []), tempMessage]
@@ -501,6 +574,7 @@ export default function ChatPage() {
         });
 
       } else if (chatType === 'room' && currentRoom) {
+        // Add temp message immediately
         setCurrentRoom(prev => ({
           ...prev,
           messages: [...(prev.messages || []), tempMessage]
@@ -514,12 +588,11 @@ export default function ChatPage() {
         });
       }
 
-      await loadConversations();
-
     } catch (error) {
       setError('Failed to send message: ' + error.message);
       setMessage(messageText);
 
+      // Remove temp message on error
       if (chatType === 'private' && currentConversation) {
         setCurrentConversation(prev => ({
           ...prev,
@@ -534,16 +607,16 @@ export default function ChatPage() {
 
       console.error('Send message error:', error);
     }
-  };
+  }, [message, currentUser?.id, chatType, currentConversation, currentRoom, socketSendMessage]);
 
-  const handleKeyPress = (e) => {
+  const handleKeyPress = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
-  };
+  }, [sendMessage]);
 
-  const handleTyping = () => {
+  const handleTyping = useCallback(() => {
     if (!socket || !selectedChat) return;
 
     if (typingTimeoutRef.current) {
@@ -551,21 +624,21 @@ export default function ChatPage() {
     }
 
     if (chatType === 'private' && currentConversation) {
-      startTyping(currentConversation._id);
+      startTyping && startTyping(currentConversation._id);
     } else if (chatType === 'room' && currentRoom) {
-      startTyping(currentRoom._id, true);
+      startTyping && startTyping(currentRoom._id, true);
     }
 
     typingTimeoutRef.current = setTimeout(() => {
       if (chatType === 'private' && currentConversation) {
-        stopTyping(currentConversation._id);
+        stopTyping && stopTyping(currentConversation._id);
       } else if (chatType === 'room' && currentRoom) {
-        stopTyping(currentRoom._id, true);
+        stopTyping && stopTyping(currentRoom._id, true);
       }
     }, 1000);
-  };
+  }, [socket, selectedChat, chatType, currentConversation, currentRoom, startTyping, stopTyping]);
 
-  const formatTime = (timestamp) => {
+  const formatTime = useCallback((timestamp) => {
     const date = new Date(timestamp);
     const now = new Date();
     const diff = now - date;
@@ -574,9 +647,9 @@ export default function ChatPage() {
     if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
     if (diff < 86400000) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     return date.toLocaleDateString();
-  };
+  }, []);
 
-  const getCurrentMessages = () => {
+  const getCurrentMessages = useCallback(() => {
     if (chatType === 'private' && currentConversation) {
       return currentConversation.messages || [];
     }
@@ -584,9 +657,9 @@ export default function ChatPage() {
       return currentRoom.messages || [];
     }
     return [];
-  };
+  }, [chatType, currentConversation, currentRoom]);
 
-  const getCurrentChatName = () => {
+  const getCurrentChatName = useCallback(() => {
     if (chatType === 'private' && currentConversation) {
       const otherUser = currentConversation.participants.find(p => p._id !== currentUser?.id);
       return otherUser?.userName || 'Unknown User';
@@ -595,24 +668,23 @@ export default function ChatPage() {
       return currentRoom.name;
     }
     return 'Select a chat';
-  };
+  }, [chatType, currentConversation, currentRoom, currentUser?.id]);
 
-  // Fixed function to check if user is in room
-  const isCurrentUserInRoom = (room) => {
-    if (!currentUser || !room.participants) return false;
+  const isCurrentUserInRoom = useCallback((room) => {
+    if (!currentUser?.id || !room.participants) return false;
     return room.participants.some(p => (p._id || p) === currentUser.id);
-  };
+  }, [currentUser?.id]);
 
-  const isMessageFromCurrentUser = (msg) => {
-    if (!currentUser || !msg.sender) return false;
+  const isMessageFromCurrentUser = useCallback((msg) => {
+    if (!currentUser?.id || !msg.sender) return false;
 
     const senderId = msg.sender._id || msg.sender.id || msg.sender;
     const currentUserId = currentUser.id;
 
     return senderId === currentUserId;
-  };
+  }, [currentUser?.id]);
 
-  const getTypingIndicator = () => {
+  const getTypingIndicator = useCallback(() => {
     if (!selectedChat) return null;
 
     const chatId = chatType === 'private' ? currentConversation?._id : currentRoom?._id;
@@ -639,9 +711,10 @@ export default function ChatPage() {
         {text}
       </div>
     );
-  };
+  }, [selectedChat, chatType, currentConversation?._id, currentRoom?._id, typingUsers]);
 
-  const allChats = [
+  // FIXED: Memoized computed values
+  const allChats = useMemo(() => [
     ...conversations.map(conv => ({
       ...conv,
       type: 'private',
@@ -654,39 +727,59 @@ export default function ChatPage() {
       name: room.name,
       avatar: room.name.charAt(0)
     }))
-  ];
+  ], [conversations, chatRooms, currentUser?.id]);
 
-  const filteredChats = allChats.filter(chat =>
-    chat.name.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredChats = useMemo(() => 
+    allChats.filter(chat =>
+      chat.name.toLowerCase().includes(searchTerm.toLowerCase())
+    ), [allChats, searchTerm]
   );
 
-  // FIXED: Updated getCurrentUsers function to handle all user scenarios better
-  const getCurrentUsers = () => {
+  const getCurrentUsers = useCallback(() => {
     console.log('getCurrentUsers called');
     console.log('userType:', userType);
     console.log('clients length:', clients.length);
     console.log('admins length:', admins.length);
     console.log('allUsers length:', allUsers.length);
     
-    // Use allUsers if available and has data, otherwise fall back to role-specific lists
     if (allUsers.length > 0) {
       console.log('Using allUsers');
       return allUsers;
     }
     
-    // Fallback to role-specific lists
     const users = userType === 'clients' ? clients : admins;
     console.log('Using role-specific users:', users.length);
     return users;
-  };
+  }, [userType, clients, admins, allUsers]);
 
-  const scrollToBottom = () => {
+  const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+  }, []);
 
   useEffect(() => {
     scrollToBottom();
-  }, [currentConversation, currentRoom]);
+  }, [getCurrentMessages, scrollToBottom]);
+
+  // FIXED: Manual refresh function for the settings button
+  const handleManualRefresh = useCallback(async () => {
+    try {
+      setError('');
+      console.log('Manual refresh triggered');
+      
+      await Promise.allSettled([
+        loadConversations(),
+        loadChatRooms(),
+        loadAllUsers(),
+        loadClients(),
+        loadAdmins()
+      ]);
+      
+      console.log('Manual refresh completed');
+    } catch (error) {
+      console.error('Manual refresh error:', error);
+      setError('Failed to refresh data');
+    }
+  }, [loadConversations, loadChatRooms, loadAllUsers, loadClients, loadAdmins]);
 
   // Show loading screen while initially loading
   if (initialLoading) {
@@ -773,11 +866,7 @@ export default function ChatPage() {
                 <Plus className="w-4 h-4" />
               </button>
               <button
-                onClick={() => {
-                  loadConversations();
-                  loadChatRooms();
-                  loadAllUsers(); // ADDED: Refresh all users too
-                }}
+                onClick={handleManualRefresh}
                 className="p-2 text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
                 title="Refresh"
               >
@@ -923,7 +1012,7 @@ export default function ChatPage() {
               </div>
             </div>
 
-            {/* Messages Area - Enhanced UI with better sender/receiver distinction */}
+            {/* Messages Area */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
               {getCurrentMessages().map((msg, index) => {
                 const isFromCurrentUser = isMessageFromCurrentUser(msg);
@@ -1043,7 +1132,7 @@ export default function ChatPage() {
         )}
       </div>
 
-      {/* New Chat Dialog - FIXED with better user handling */}
+      {/* New Chat Dialog */}
       {showNewChatDialog && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl w-96 max-h-96 flex flex-col">
@@ -1058,7 +1147,6 @@ export default function ChatPage() {
                 </button>
               </div>
 
-              {/* UPDATED: Show tabs only if using role-specific lists, otherwise show all users */}
               {allUsers.length === 0 && (clients.length > 0 || admins.length > 0) && (
                 <div className="mt-4">
                   <div className="flex border-b">
