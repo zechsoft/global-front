@@ -55,6 +55,7 @@ export default function CustomerDelivery() {
   const [currentPage, setCurrentPage] = useState(1)
   const [isLoading, setIsLoading] = useState(true)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [showTableOptionsDropdown, setShowTableOptionsDropdown] = useState(false)
   
   // Modal states
   const [showModal, setShowModal] = useState(false)
@@ -100,6 +101,20 @@ export default function CustomerDelivery() {
 
   // Get user from storage (matching the pattern from your auth context)
   const user = JSON.parse(localStorage.getItem("user")) || JSON.parse(sessionStorage.getItem("user"))
+
+  // Handle clicking outside dropdown to close it
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (!event.target.closest('.table-options-dropdown')) {
+        setShowTableOptionsDropdown(false)
+      }
+    }
+
+    if (showTableOptionsDropdown) {
+      document.addEventListener('click', handleClickOutside)
+      return () => document.removeEventListener('click', handleClickOutside)
+    }
+  }, [showTableOptionsDropdown])
 
   // Initialize data
   useEffect(() => {
@@ -604,19 +619,27 @@ export default function CustomerDelivery() {
         </div>
         <div className="flex items-center space-x-2">
           {isAdmin && (
-            <div className="relative">
-              <button className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50">
+            <div className="relative table-options-dropdown">
+              <button 
+                onClick={() => setShowTableOptionsDropdown(!showTableOptionsDropdown)}
+                className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+              >
                 <Settings className="w-4 h-4" />
                 <span>Table Options</span>
               </button>
-              <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg border z-10 hidden group-hover:block">
-                <button
-                  onClick={openHeaderModal}
-                  className="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50"
-                >
-                  Manage Columns
-                </button>
-              </div>
+              {showTableOptionsDropdown && (
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg border z-10">
+                  <button
+                    onClick={() => {
+                      openHeaderModal()
+                      setShowTableOptionsDropdown(false)
+                    }}
+                    className="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50"
+                  >
+                    Manage Columns
+                  </button>
+                </div>
+              )}
             </div>
           )}
           <button

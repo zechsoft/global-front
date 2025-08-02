@@ -15,20 +15,25 @@ import {
   AlertCircle,
   CheckCircle,
   Clock,
-  XCircle
+  XCircle,
+  Settings,
+  ChevronUp,
+  ChevronDown,
+  Check,
+  X
 } from 'lucide-react';
 
 const DEFAULT_HEADERS = [
-  { id: "OrderNumber", label: "Order Number", visible: true },
-  { id: "MaterialCategory", label: "Material Category", visible: true },
-  { id: "Vendor", label: "Vendor", visible: true },
-  { id: "Invitee", label: "Invitee", visible: true },
-  { id: "Host", label: "Host/Inviter Contact Information", visible: true },
-  { id: "Sender", label: "Sender", visible: true },
-  { id: "Status", label: "Status", visible: true },
-  { id: "SupplementTemplate", label: "Supplement Template", visible: true },
-  { id: "Created", label: "Create Time", visible: true },
-  { id: "updated", label: "Update Time", visible: true },
+  { id: "orderNumber", label: "Order Number", visible: true, altKey: "OrderNumber" },
+  { id: "materialCategory", label: "Material Category", visible: true, altKey: "MaterialCategory" },
+  { id: "vendor", label: "Vendor", visible: true, altKey: "Vendor" },
+  { id: "invitee", label: "Invitee", visible: true, altKey: "Invitee" },
+  { id: "hostInviterContactInfo", label: "Host/Inviter Contact Information", visible: true, altKey: "Host" },
+  { id: "sender", label: "Sender", visible: true, altKey: "Sender" },
+  { id: "status", label: "Status", visible: true, altKey: "Status" },
+  { id: "supplementTemplate", label: "Supplement Template", visible: true, altKey: "SupplementTemplate" },
+  { id: "createTime", label: "Create Time", visible: true, altKey: "Created" },
+  { id: "updateTime", label: "Update Time", visible: true, altKey: "updated" },
 ];
 
 const StatusBadge = ({ status, type = "status" }) => {
@@ -88,7 +93,7 @@ const Modal = ({ isOpen, onClose, title, children }) => {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-6 border-b">
           <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
           <button
@@ -181,6 +186,7 @@ export default function MaterialReplenishView() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [searchColumn, setSearchColumn] = useState("All");
   const [filterStatus, setFilterStatus] = useState("All");
   const [filterTemplateStatus, setFilterTemplateStatus] = useState("All");
   const [currentPage, setCurrentPage] = useState(1);
@@ -193,6 +199,20 @@ export default function MaterialReplenishView() {
   const [formData, setFormData] = useState({});
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
+  // Header management state
+  const [tableHeaders, setTableHeaders] = useState(DEFAULT_HEADERS);
+  const [showHeaderModal, setShowHeaderModal] = useState(false);
+  const [showAddHeaderModal, setShowAddHeaderModal] = useState(false);
+  const [tempHeaders, setTempHeaders] = useState([]);
+  const [editingHeader, setEditingHeader] = useState(null);
+  const [newHeaderName, setNewHeaderName] = useState('');
+  const [newHeaderInfo, setNewHeaderInfo] = useState({
+    id: '',
+    label: '',
+    visible: true,
+    altKey: ''
+  });
+
   const isAdmin = user?.role === 'admin';
   const apiUrl = "http://localhost:8000/api";
 
@@ -204,15 +224,22 @@ export default function MaterialReplenishView() {
     setToast({ show: false, message: '', type: 'success' });
   };
 
+  // Helper function to get field value considering both new and old key formats
+  const getFieldValue = (item, header) => {
+    return header.altKey 
+      ? (item[header.id] || item[header.altKey] || "") 
+      : (item[header.id] || "");
+  };
+
   // Initialize form data
   const initializeFormData = () => {
     const initialData = {};
-    DEFAULT_HEADERS.forEach(header => {
-      if (header.id === "Status") {
+    tableHeaders.forEach(header => {
+      if (header.id === "status") {
         initialData[header.id] = "Active";
-      } else if (header.id === "SupplementTemplate") {
+      } else if (header.id === "supplementTemplate") {
         initialData[header.id] = "Complete";
-      } else if (header.id === "Created" || header.id === "updated") {
+      } else if (header.id === "createTime" || header.id === "updateTime") {
         initialData[header.id] = new Date().toISOString();
       } else {
         initialData[header.id] = "";
@@ -246,6 +273,24 @@ export default function MaterialReplenishView() {
       } else {
         throw new Error("Invalid data format received from server");
       }
+
+      // Fetch table headers
+      try {
+        const headerResponse = await fetch(`${apiUrl}/table-headers/get-material?email=${user.email}`, {
+          credentials: 'include'
+        });
+        
+        if (headerResponse.ok) {
+          const headerData = await headerResponse.json();
+          if (headerData.headers) {
+            setTableHeaders(headerData.headers);
+          }
+        }
+      } catch (headerError) {
+        console.error("Error fetching table headers:", headerError);
+        // Use default headers if fetch fails
+      }
+
     } catch (err) {
       console.error("Error fetching data:", err);
       setError(err.message || "Failed to fetch material data");
@@ -254,29 +299,49 @@ export default function MaterialReplenishView() {
       const mockData = [
         {
           id: "1",
+          orderNumber: "ORD001",
           OrderNumber: "ORD001",
+          materialCategory: "Electronics",
           MaterialCategory: "Electronics",
+          vendor: "ABC Suppliers",
           Vendor: "ABC Suppliers",
+          invitee: "John Doe",
           Invitee: "John Doe",
+          hostInviterContactInfo: "host@company.com",
           Host: "host@company.com",
+          sender: "Jane Smith",
           Sender: "Jane Smith",
+          status: "Active",
           Status: "Active",
+          supplementTemplate: "Complete",
           SupplementTemplate: "Complete",
+          createTime: "2025-07-20T10:00:00Z",
           Created: "2025-07-20T10:00:00Z",
+          updateTime: "2025-07-20T10:00:00Z",
           updated: "2025-07-20T10:00:00Z",
           user: "admin@example.com"
         },
         {
           id: "2",
+          orderNumber: "ORD002",
           OrderNumber: "ORD002",
+          materialCategory: "Raw Materials",
           MaterialCategory: "Raw Materials",
+          vendor: "XYZ Industries",
           Vendor: "XYZ Industries",
+          invitee: "Sarah Wilson",
           Invitee: "Sarah Wilson",
+          hostInviterContactInfo: "contact@xyz.com",
           Host: "contact@xyz.com",
+          sender: "Bob Brown",
           Sender: "Bob Brown",
+          status: "Pending",
           Status: "Pending",
+          supplementTemplate: "Incomplete",
           SupplementTemplate: "Incomplete",
+          createTime: "2025-07-22T14:30:00Z",
           Created: "2025-07-22T14:30:00Z",
+          updateTime: "2025-07-22T14:30:00Z",
           updated: "2025-07-22T14:30:00Z",
           user: "admin@example.com"
         }
@@ -298,25 +363,44 @@ export default function MaterialReplenishView() {
     
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
-      results = results.filter(material => 
-        (material.OrderNumber || "").toString().toLowerCase().includes(term) ||
-        (material.MaterialCategory || "").toLowerCase().includes(term) ||
-        (material.Vendor || "").toLowerCase().includes(term) ||
-        (material.Invitee || "").toLowerCase().includes(term)
-      );
+      
+      if (searchColumn === "All") {
+        results = results.filter(material => 
+          tableHeaders.some(header => {
+            const value = getFieldValue(material, header);
+            return value && value.toString().toLowerCase().includes(term);
+          })
+        );
+      } else {
+        const selectedHeader = tableHeaders.find(h => h.label === searchColumn);
+        if (selectedHeader) {
+          results = results.filter(material => {
+            const value = getFieldValue(material, selectedHeader);
+            return value && value.toString().toLowerCase().includes(term);
+          });
+        }
+      }
     }
     
     if (filterStatus !== "All") {
-      results = results.filter(material => material.Status === filterStatus);
+      results = results.filter(material => {
+        const statusHeader = tableHeaders.find(h => h.id === "status");
+        const status = getFieldValue(material, statusHeader);
+        return status === filterStatus;
+      });
     }
     
     if (filterTemplateStatus !== "All") {
-      results = results.filter(material => material.SupplementTemplate === filterTemplateStatus);
+      results = results.filter(material => {
+        const templateHeader = tableHeaders.find(h => h.id === "supplementTemplate");
+        const template = getFieldValue(material, templateHeader);
+        return template === filterTemplateStatus;
+      });
     }
     
     setFilteredMaterials(results);
     setCurrentPage(1); // Reset to first page when filters change
-  }, [searchTerm, filterStatus, filterTemplateStatus, materials]);
+  }, [searchTerm, searchColumn, filterStatus, filterTemplateStatus, materials, tableHeaders]);
 
   // Get paginated data
   const getPaginatedData = () => {
@@ -339,7 +423,11 @@ export default function MaterialReplenishView() {
   };
 
   const handleEdit = (material) => {
-    setFormData({ ...material });
+    const editData = {};
+    tableHeaders.forEach(header => {
+      editData[header.id] = getFieldValue(material, header);
+    });
+    setFormData(editData);
     setSelectedMaterial(material);
     setShowEditModal(true);
   };
@@ -355,14 +443,14 @@ export default function MaterialReplenishView() {
       
       // Map the frontend data structure to match backend expectations
       const rowData = {
-        orderNumber: formData.OrderNumber || "",
-        materialCategory: formData.MaterialCategory || "",
-        vendor: formData.Vendor || "",
-        invitee: formData.Invitee || "",
-        hostInviterContactInfo: formData.Host || "",
-        sender: formData.Sender || "",
-        status: formData.Status || "Active",
-        supplementTemplate: formData.SupplementTemplate || "Complete",
+        orderNumber: formData.orderNumber || "",
+        materialCategory: formData.materialCategory || "",
+        vendor: formData.vendor || "",
+        invitee: formData.invitee || "",
+        hostInviterContactInfo: formData.hostInviterContactInfo || "",
+        sender: formData.sender || "",
+        status: formData.status || "Active",
+        supplementTemplate: formData.supplementTemplate || "Complete",
         updateTime: currentDateTime
       };
 
@@ -438,25 +526,153 @@ export default function MaterialReplenishView() {
     }
   };
 
+  // Header management functions
+  const openHeaderModal = () => {
+    setTempHeaders([...tableHeaders]);
+    setShowHeaderModal(true);
+    setEditingHeader(null);
+  };
+
+  const toggleHeaderVisibility = (index) => {
+    const updated = [...tempHeaders];
+    updated[index].visible = !updated[index].visible;
+    setTempHeaders(updated);
+  };
+
+  const handleEditHeaderLabel = (index) => {
+    setEditingHeader(index);
+    setNewHeaderName(tempHeaders[index].label);
+  };
+
+  const saveHeaderLabel = () => {
+    if (editingHeader !== null && newHeaderName.trim()) {
+      const updated = [...tempHeaders];
+      updated[editingHeader].label = newHeaderName.trim();
+      setTempHeaders(updated);
+      setEditingHeader(null);
+      setNewHeaderName('');
+    }
+  };
+
+  const cancelHeaderEdit = () => {
+    setEditingHeader(null);
+    setNewHeaderName('');
+  };
+
+  const deleteHeader = (index) => {
+    if (!isAdmin) return;
+    
+    const updated = [...tempHeaders];
+    updated.splice(index, 1);
+    setTempHeaders(updated);
+  };
+
+  const handleAddHeader = () => {
+    if (!isAdmin) return;
+    setNewHeaderInfo({
+      id: '',
+      label: '',
+      visible: true,
+      altKey: ''
+    });
+    setShowAddHeaderModal(true);
+  };
+
+  const saveNewHeader = () => {
+    if (!newHeaderInfo.id || !newHeaderInfo.label) {
+      showToast("Header ID and Label are required", "error");
+      return;
+    }
+    
+    // Check if ID already exists
+    if (tempHeaders.some(h => h.id === newHeaderInfo.id)) {
+      showToast("Header ID already exists", "error");
+      return;
+    }
+    
+    const newHeader = {
+      id: newHeaderInfo.id,
+      label: newHeaderInfo.label,
+      visible: true,
+      altKey: newHeaderInfo.altKey || null
+    };
+    
+    setTempHeaders([...tempHeaders, newHeader]);
+    setShowAddHeaderModal(false);
+    setNewHeaderInfo({
+      id: '',
+      label: '',
+      visible: true,
+      altKey: ''
+    });
+    showToast("New column added successfully");
+  };
+
+  const resetHeadersToDefault = () => {
+    setTempHeaders([...DEFAULT_HEADERS]);
+    showToast("Headers reset to default");
+  };
+
+  const moveHeader = (index, direction) => {
+    if ((direction < 0 && index === 0) || (direction > 0 && index === tempHeaders.length - 1)) {
+      return;
+    }
+    
+    const updated = [...tempHeaders];
+    const temp = updated[index];
+    updated[index] = updated[index + direction];
+    updated[index + direction] = temp;
+    setTempHeaders(updated);
+  };
+
+  const saveHeaderChanges = async () => {
+    try {
+      if (isAdmin) {
+        await fetch(`${apiUrl}/table-headers/update-material`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            headers: tempHeaders,
+            email: user.email
+          })
+        });
+        showToast("Table headers updated globally");
+      }
+      
+      setTableHeaders(tempHeaders);
+      setShowHeaderModal(false);
+    } catch (error) {
+      console.error("Error saving header changes:", error);
+      showToast("Error saving header changes", "error");
+    }
+  };
+
   const exportToCSV = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "#," + DEFAULT_HEADERS
+    csvContent += "#," + tableHeaders
       .filter(header => header.visible)
       .map(header => header.label)
       .join(",") + "\n";
     
     filteredMaterials.forEach((row, index) => {
       csvContent += `${index + 1},`;
-      csvContent += `${row.OrderNumber || ""},`;
-      csvContent += `"${row.MaterialCategory || ""}",`;
-      csvContent += `"${row.Vendor || ""}",`;
-      csvContent += `"${row.Invitee || ""}",`;
-      csvContent += `"${row.Host || ""}",`;
-      csvContent += `"${row.Sender || ""}",`;
-      csvContent += `${row.Status || ""},`;
-      csvContent += `${row.SupplementTemplate || ""},`;
-      csvContent += `${row.Created ? new Date(row.Created).toLocaleString() : ""},`;
-      csvContent += `${row.updated ? new Date(row.updated).toLocaleString() : ""}\n`;
+      tableHeaders
+        .filter(header => header.visible)
+        .forEach((header, headerIndex) => {
+          const value = getFieldValue(row, header);
+          const formattedValue = (header.id === "createTime" || header.id === "updateTime") && value
+            ? new Date(value).toLocaleString()
+            : value || "";
+          
+          csvContent += `"${formattedValue}"`;
+          if (headerIndex < tableHeaders.filter(h => h.visible).length - 1) {
+            csvContent += ",";
+          }
+        });
+      csvContent += "\n";
     });
     
     const encodedUri = encodeURI(csvContent);
@@ -508,13 +724,22 @@ export default function MaterialReplenishView() {
               Export CSV
             </button>
             {isAdmin && (
-              <button
-                onClick={handleAdd}
-                className="flex items-center px-4 py-2 text-white bg-green-600 rounded-md hover:bg-green-700 transition-colors"
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Add Material
-              </button>
+              <>
+                <button
+                  onClick={openHeaderModal}
+                  className="flex items-center px-4 py-2 text-gray-600 bg-gray-50 rounded-md hover:bg-gray-100 transition-colors"
+                >
+                  <Settings className="w-4 h-4 mr-2" />
+                  Manage Columns
+                </button>
+                <button
+                  onClick={handleAdd}
+                  className="flex items-center px-4 py-2 text-white bg-green-600 rounded-md hover:bg-green-700 transition-colors"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Material
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -523,11 +748,21 @@ export default function MaterialReplenishView() {
       {/* Filters */}
       <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
         <div className="flex flex-wrap gap-4">
+          <select
+            className="px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            value={searchColumn}
+            onChange={(e) => setSearchColumn(e.target.value)}
+          >
+            <option value="All">All Columns</option>
+            {tableHeaders.filter(h => h.visible).map(header => (
+              <option key={header.id} value={header.label}>{header.label}</option>
+            ))}
+          </select>
           <div className="relative flex-1 min-w-64">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
             <input
               type="text"
-              placeholder="Search by order number, vendor, category..."
+              placeholder="Search by selected column..."
               className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}

@@ -133,6 +133,9 @@ export default function DailyWorkView() {
   const [selectedReport, setSelectedReport] = useState(null);
   const [formData, setFormData] = useState({});
   const [notification, setNotification] = useState({ show: false, message: '', type: '' });
+  
+  // Add dynamic headers state
+  const [tableHeaders, setTableHeaders] = useState(DEFAULT_HEADERS);
 
   const isAdmin = user?.role === 'admin';
   const apiUrl = "http://localhost:8000/api";
@@ -143,6 +146,65 @@ export default function DailyWorkView() {
     setTimeout(() => {
       setNotification({ show: false, message: '', type: '' });
     }, 5000);
+  };
+
+  // Fetch table headers from backend/localStorage
+  const fetchTableHeaders = async () => {
+    try {
+      if (!user?.email) {
+        console.warn("No user email found, loading from localStorage");
+        const savedHeaders = localStorage.getItem('dailyWorkerTableHeaders');
+        if (savedHeaders) {
+          setTableHeaders(JSON.parse(savedHeaders));
+        } else {
+          setTableHeaders(DEFAULT_HEADERS);
+        }
+        return;
+      }
+      
+      const headerResponse = await fetch(
+        `${apiUrl}/table-headers/get-daily-work?email=${user.email}`, 
+        { credentials: 'include' }
+      );
+      
+      if (headerResponse.ok) {
+        const data = await headerResponse.json();
+        if (data.headers && Array.isArray(data.headers)) {
+          setTableHeaders(data.headers);
+          localStorage.setItem('dailyWorkerTableHeaders', JSON.stringify(data.headers));
+        } else {
+          // Fallback to localStorage
+          const savedHeaders = localStorage.getItem('dailyWorkerTableHeaders');
+          if (savedHeaders) {
+            setTableHeaders(JSON.parse(savedHeaders));
+          } else {
+            setTableHeaders(DEFAULT_HEADERS);
+          }
+        }
+      } else {
+        // Fallback to localStorage
+        const savedHeaders = localStorage.getItem('dailyWorkerTableHeaders');
+        if (savedHeaders) {
+          setTableHeaders(JSON.parse(savedHeaders));
+        } else {
+          setTableHeaders(DEFAULT_HEADERS);
+        }
+      }
+    } catch (error) {
+      console.error("Error fetching table headers:", error);
+      // Fallback to localStorage
+      const savedHeaders = localStorage.getItem('dailyWorkerTableHeaders');
+      if (savedHeaders) {
+        try {
+          setTableHeaders(JSON.parse(savedHeaders));
+        } catch (e) {
+          console.error("Error loading saved headers:", e);
+          setTableHeaders(DEFAULT_HEADERS);
+        }
+      } else {
+        setTableHeaders(DEFAULT_HEADERS);
+      }
+    }
   };
 
   // Initialize form data
@@ -247,7 +309,25 @@ export default function DailyWorkView() {
   };
 
   useEffect(() => {
+    fetchTableHeaders(); // Fetch headers first
     fetchReports();
+  }, []);
+
+  // Listen for header changes from localStorage (when updated from main page)
+  useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (e.key === 'dailyWorkerTableHeaders' && e.newValue) {
+        try {
+          const newHeaders = JSON.parse(e.newValue);
+          setTableHeaders(newHeaders);
+        } catch (error) {
+          console.error("Error parsing updated headers:", error);
+        }
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
   // Filter reports based on search and filter criteria
@@ -415,23 +495,36 @@ export default function DailyWorkView() {
 
   const exportToCSV = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += DEFAULT_HEADERS
+    csvContent += tableHeaders
       .filter(header => header.visible)
       .map(header => header.label)
       .join(",") + "\n";
     
     filteredReports.forEach((row) => {
-      csvContent += `${row.srNo},`;
-      csvContent += `"${row.companyName || ""}",`;
-      csvContent += `"${row.projectName || ""}",`;
-      csvContent += `${row.date ? new Date(row.date).toLocaleDateString() : ""},`;
-      csvContent += `"${row.supervisorName || ""}",`;
-      csvContent += `"${row.managerName || ""}",`;
-      csvContent += `"${row.prepaidBy || ""}",`;
-      csvContent += `${row.employees || ""},`;
-      csvContent += `"${row.workType || ""}",`;
-      csvContent += `${row.progress || ""},`;
-      csvContent += `${row.hours || ""}\n`;
+      const csvRow = tableHeaders
+        .filter(header => header.visible)
+        .map(header => {
+          let value = "";
+          if (header.altKey) {
+            value = row[header.id] || row[header.altKey] || "";
+          } else {
+            value = row[header.id] || "";
+          }
+          
+          // Handle special formatting
+          if (header.id === "date" && value) {
+            value = new Date(value).toLocaleDateString();
+          }
+          
+          // Escape quotes and wrap in quotes if contains comma
+          if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
+            value = `"${value.replace(/"/g, '""')}"`;
+          }
+          
+          return value;
+        });
+      
+      csvContent += csvRow.join(",") + "\n";
     });
     
     const encodedUri = encodeURI(csvContent);
@@ -443,6 +536,11 @@ export default function DailyWorkView() {
     document.body.removeChild(link);
     
     showNotification(`Exported ${filteredReports.length} worker report records to CSV`, "success");
+  };
+
+  // Get visible headers for rendering
+  const getVisibleHeaders = () => {
+    return tableHeaders.filter(header => header.visible);
   };
 
   if (isLoading) {
@@ -555,7 +653,7 @@ export default function DailyWorkView() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                {DEFAULT_HEADERS.filter(header => header.visible).map(header => (
+                {getVisibleHeaders().map(header => (
                   <th key={header.id} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     {header.label}
                   </th>
@@ -567,7 +665,7 @@ export default function DailyWorkView() {
               {getPaginatedData().length > 0 ? (
                 getPaginatedData().map((report) => (
                   <tr key={report.id} className="hover:bg-gray-50">
-                    {DEFAULT_HEADERS.filter(header => header.visible).map(header => {
+                    {getVisibleHeaders().map(header => {
                       const value = header.altKey ? 
                         (report[header.id] || report[header.altKey] || "") : 
                         (report[header.id] || "");
@@ -627,7 +725,7 @@ export default function DailyWorkView() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={DEFAULT_HEADERS.filter(h => h.visible).length + 1} className="px-6 py-4 text-center text-gray-500">
+                  <td colSpan={getVisibleHeaders().length + 1} className="px-6 py-4 text-center text-gray-500">
                     No report data matching your criteria
                   </td>
                 </tr>
@@ -720,57 +818,68 @@ export default function DailyWorkView() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-4">
                 <h3 className="font-medium text-gray-900 mb-4">Project Information</h3>
-                <div>
-                  <span className="block text-sm font-medium text-gray-700">Company Name:</span>
-                  <p className="text-gray-900">{selectedReport.companyName}</p>
-                </div>
-                <div>
-                  <span className="block text-sm font-medium text-gray-700">Project Name:</span>
-                  <p className="text-gray-900">{selectedReport.projectName}</p>
-                </div>
-                <div>
-                  <span className="block text-sm font-medium text-gray-700">Date:</span>
-                  <p className="text-gray-900">
-                    {selectedReport.date ? new Date(selectedReport.date).toLocaleDateString() : "N/A"}
-                  </p>
-                </div>
-                <div>
-                  <span className="block text-sm font-medium text-gray-700">Nature of Work:</span>
-                  <p className="text-gray-900">{selectedReport.workType}</p>
-                </div>
+                {getVisibleHeaders().slice(0, Math.ceil(getVisibleHeaders().length / 2)).map(header => {
+                  if (header.id === "srNo") return null;
+                  
+                  const value = header.altKey ? 
+                    (selectedReport[header.id] || selectedReport[header.altKey] || "") : 
+                    (selectedReport[header.id] || "");
+                  
+                  let displayValue = value;
+                  if (header.id === "date" && value) {
+                    displayValue = new Date(value).toLocaleDateString();
+                  } else if (header.id === "progress") {
+                    return (
+                      <div key={header.id}>
+                        <span className="block text-sm font-medium text-gray-700">{header.label}:</span>
+                        <div className="mt-1">
+                          <ProgressBadge progress={value} />
+                        </div>
+                      </div>
+                    );
+                  }
+                  
+                  return (
+                    <div key={header.id}>
+                      <span className="block text-sm font-medium text-gray-700">{header.label}:</span>
+                      <p className="text-gray-900">{displayValue || "N/A"}</p>
+                    </div>
+                  );
+                })}
               </div>
               
               <div className="space-y-4">
-                <h3 className="font-medium text-gray-900 mb-4">Personnel Information</h3>
-                <div>
-                  <span className="block text-sm font-medium text-gray-700">Supervisor Name:</span>
-                  <p className="text-gray-900">{selectedReport.supervisorName}</p>
-                </div>
-                <div>
-                  <span className="block text-sm font-medium text-gray-700">Manager Name:</span>
-                  <p className="text-gray-900">{selectedReport.managerName}</p>
-                </div>
-                <div>
-                  <span className="block text-sm font-medium text-gray-700">Prepared By:</span>
-                  <p className="text-gray-900">{selectedReport.prepaidBy}</p>
-                </div>
-                <div>
-                  <span className="block text-sm font-medium text-gray-700">No. of Employees:</span>
-                  <p className="text-gray-900">{selectedReport.employees}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <span className="block text-sm font-medium text-gray-700">Progress:</span>
-                <div className="mt-1">
-                  <ProgressBadge progress={selectedReport.progress} />
-                </div>
-              </div>
-              <div>
-                <span className="block text-sm font-medium text-gray-700">Hours of Work:</span>
-                <p className="text-gray-900">{selectedReport.hours} hours</p>
+                <h3 className="font-medium text-gray-900 mb-4">Additional Information</h3>
+                {getVisibleHeaders().slice(Math.ceil(getVisibleHeaders().length / 2)).map(header => {
+                  if (header.id === "srNo") return null;
+                  
+                  const value = header.altKey ? 
+                    (selectedReport[header.id] || selectedReport[header.altKey] || "") : 
+                    (selectedReport[header.id] || "");
+                  
+                  let displayValue = value;
+                  if (header.id === "date" && value) {
+                    displayValue = new Date(value).toLocaleDateString();
+                  } else if (header.id === "progress") {
+                    return (
+                      <div key={header.id}>
+                        <span className="block text-sm font-medium text-gray-700">{header.label}:</span>
+                        <div className="mt-1">
+                          <ProgressBadge progress={value} />
+                        </div>
+                      </div>
+                    );
+                  } else if (header.id === "hours") {
+                    displayValue = value ? `${value} hours` : "N/A";
+                  }
+                  
+                  return (
+                    <div key={header.id}>
+                      <span className="block text-sm font-medium text-gray-700">{header.label}:</span>
+                      <p className="text-gray-900">{displayValue || "N/A"}</p>
+                    </div>
+                  );
+                })}
               </div>
             </div>
             
@@ -823,145 +932,84 @@ export default function DailyWorkView() {
       >
         <div className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Company Name <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.companyName || ""}
-                onChange={(e) => setFormData({ ...formData, companyName: e.target.value })}
-                placeholder="Enter company name"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Project Name <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.projectName || ""}
-                onChange={(e) => setFormData({ ...formData, projectName: e.target.value })}
-                placeholder="Enter project name"
-                required
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Date <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="date"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.date || ""}
-                onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Nature of Work
-              </label>
-              <input
-                type="text"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.workType || ""}
-                onChange={(e) => setFormData({ ...formData, workType: e.target.value })}
-                placeholder="Enter nature of work"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Supervisor Name
-              </label>
-              <input
-                type="text"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.supervisorName || ""}
-                onChange={(e) => setFormData({ ...formData, supervisorName: e.target.value })}
-                placeholder="Enter supervisor name"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Manager Name
-              </label>
-              <input
-                type="text"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.managerName || ""}
-                onChange={(e) => setFormData({ ...formData, managerName: e.target.value })}
-                placeholder="Enter manager name"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Prepared By
-              </label>
-              <input
-                type="text"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.prepaidBy || ""}
-                onChange={(e) => setFormData({ ...formData, prepaidBy: e.target.value })}
-                placeholder="Enter prepared by"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                No. of Employees
-              </label>
-              <input
-                type="number"
-                min="1"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.employees || ""}
-                onChange={(e) => setFormData({ ...formData, employees: e.target.value })}
-                placeholder="Enter number of employees"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Progress
-              </label>
-              <select
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.progress || "In Progress"}
-                onChange={(e) => setFormData({ ...formData, progress: e.target.value })}
-              >
-                <option value="Not Started">Not Started</option>
-                <option value="In Progress">In Progress</option>
-                <option value="Completed">Completed</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Hours of Work
-              </label>
-              <input
-                type="number"
-                min="0"
-                step="0.5"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.hours || ""}
-                onChange={(e) => setFormData({ ...formData, hours: e.target.value })}
-                placeholder="Enter hours of work"
-              />
-            </div>
+            {getVisibleHeaders().map(header => {
+              if (header.id === "srNo") return null;
+              
+              const fieldValue = formData[header.id] || "";
+              const isRequired = ["companyName", "projectName", "date"].includes(header.id);
+              
+              if (header.id === "progress") {
+                return (
+                  <div key={header.id}>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {header.label}
+                    </label>
+                    <select
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      value={fieldValue || "In Progress"}
+                      onChange={(e) => setFormData({ ...formData, [header.id]: e.target.value })}
+                    >
+                      <option value="Not Started">Not Started</option>
+                      <option value="In Progress">In Progress</option>
+                      <option value="Completed">Completed</option>
+                    </select>
+                  </div>
+                );
+              }
+              
+              if (header.id === "date") {
+                return (
+                  <div key={header.id}>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {header.label} {isRequired && <span className="text-red-500">*</span>}
+                    </label>
+                    <input
+                      type="date"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      value={fieldValue}
+                      onChange={(e) => setFormData({ ...formData, [header.id]: e.target.value })}
+                      required={isRequired}
+                    />
+                  </div>
+                );
+              }
+              
+              if (header.id === "employees" || header.id === "hours") {
+                return (
+                  <div key={header.id}>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {header.label} {isRequired && <span className="text-red-500">*</span>}
+                    </label>
+                    <input
+                      type="number"
+                      min={header.id === "employees" ? "1" : "0"}
+                      step={header.id === "hours" ? "0.5" : "1"}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      value={fieldValue}
+                      onChange={(e) => setFormData({ ...formData, [header.id]: e.target.value })}
+                      placeholder={`Enter ${header.label.toLowerCase()}`}
+                      required={isRequired}
+                    />
+                  </div>
+                );
+              }
+              
+              return (
+                <div key={header.id}>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {header.label} {isRequired && <span className="text-red-500">*</span>}
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    value={fieldValue}
+                    onChange={(e) => setFormData({ ...formData, [header.id]: e.target.value })}
+                    placeholder={`Enter ${header.label.toLowerCase()}`}
+                    required={isRequired}
+                  />
+                </div>
+              );
+            })}
           </div>
 
           <div className="flex justify-end space-x-3 mt-6">

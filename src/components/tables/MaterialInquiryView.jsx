@@ -16,7 +16,11 @@ import {
   CheckCircle,
   Clock,
   XCircle,
-  Settings
+  Settings,
+  ChevronUp,
+  ChevronDown,
+  Check,
+  X
 } from 'lucide-react';
 
 const DEFAULT_HEADERS = [
@@ -131,18 +135,40 @@ export default function MaterialInquiryView() {
   const [showViewModal, setShowViewModal] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showHeaderModal, setShowHeaderModal] = useState(false);
+  const [showAddHeaderModal, setShowAddHeaderModal] = useState(false);
   const [selectedMaterial, setSelectedMaterial] = useState(null);
   const [formData, setFormData] = useState({});
   const [tableHeaders, setTableHeaders] = useState(DEFAULT_HEADERS);
   const [tempHeaders, setTempHeaders] = useState([]);
+  const [editingHeader, setEditingHeader] = useState(null);
+  const [newHeaderName, setNewHeaderName] = useState('');
+  const [newHeaderInfo, setNewHeaderInfo] = useState({
+    id: '',
+    label: '',
+    visible: true,
+    altKey: ''
+  });
 
   const isAdmin = user?.role === 'admin';
   const apiUrl = "http://localhost:8000/api";
 
+  // Toast notification helper
+  const showToast = (message, type = "success") => {
+    const toast = document.createElement('div');
+    toast.className = `fixed top-4 right-4 p-4 rounded-md z-50 ${
+      type === 'success' ? 'bg-green-500' : 'bg-red-500'
+    } text-white`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      document.body.removeChild(toast);
+    }, 3000);
+  };
+
   // Initialize form data
   const initializeFormData = () => {
     const initialData = {};
-    DEFAULT_HEADERS.forEach(header => {
+    tableHeaders.forEach(header => {
       initialData[header.id] = "";
     });
     initialData.status = "Pending";
@@ -222,9 +248,40 @@ export default function MaterialInquiryView() {
     }
   };
 
+  // Fetch table headers from backend
+  const fetchTableHeaders = async () => {
+    try {
+      if (isAdmin && user?.email) {
+        const response = await fetch(`${apiUrl}/table-headers/get-material-inquiry?email=${user.email}`, {
+          credentials: 'include'
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.headers) {
+            setTableHeaders(data.headers);
+            return;
+          }
+        }
+      }
+      
+      // Fallback to localStorage if API fails
+      const savedHeaders = localStorage.getItem('materialInquiryTableHeaders');
+      if (savedHeaders) {
+        setTableHeaders(JSON.parse(savedHeaders));
+      }
+    } catch (error) {
+      console.error("Error fetching table headers:", error);
+      // Use default headers if everything fails
+    }
+  };
+
   useEffect(() => {
-    fetchMaterials();
-  }, []);
+    if (user?.email) {
+      fetchMaterials();
+      fetchTableHeaders();
+    }
+  }, [user]);
 
   // Filter materials based on search and filter criteria
   useEffect(() => {
@@ -269,7 +326,7 @@ export default function MaterialInquiryView() {
 
   const handleEdit = (material) => {
     const editData = {};
-    DEFAULT_HEADERS.forEach(header => {
+    tableHeaders.forEach(header => {
       const value = header.altKey ? 
         (material[header.id] || material[header.altKey] || "") : 
         (material[header.id] || "");
@@ -285,26 +342,131 @@ export default function MaterialInquiryView() {
     setShowDeleteDialog(true);
   };
 
-  // Header management
+  // Header management functions
   const openHeaderModal = () => {
     setTempHeaders([...tableHeaders]);
     setShowHeaderModal(true);
+    setEditingHeader(null);
   };
 
-  const handleHeaderVisibilityChange = (index) => {
-    const updatedHeaders = [...tempHeaders];
-    updatedHeaders[index].visible = !updatedHeaders[index].visible;
-    setTempHeaders(updatedHeaders);
+  const toggleHeaderVisibility = (index) => {
+    const updated = [...tempHeaders];
+    updated[index].visible = !updated[index].visible;
+    setTempHeaders(updated);
   };
 
-  const saveHeaderChanges = () => {
-    setTableHeaders(tempHeaders);
-    setShowHeaderModal(false);
-    localStorage.setItem('materialInquiryTableHeaders', JSON.stringify(tempHeaders));
+  const handleEditHeaderLabel = (index) => {
+    setEditingHeader(index);
+    setNewHeaderName(tempHeaders[index].label);
+  };
+
+  const saveHeaderLabel = () => {
+    if (editingHeader !== null && newHeaderName.trim()) {
+      const updated = [...tempHeaders];
+      updated[editingHeader].label = newHeaderName.trim();
+      setTempHeaders(updated);
+      setEditingHeader(null);
+      setNewHeaderName('');
+    }
+  };
+
+  const cancelHeaderEdit = () => {
+    setEditingHeader(null);
+    setNewHeaderName('');
+  };
+
+  const deleteHeader = (index) => {
+    if (!isAdmin) return;
+    
+    const updated = [...tempHeaders];
+    updated.splice(index, 1);
+    setTempHeaders(updated);
+  };
+
+  const handleAddHeader = () => {
+    if (!isAdmin) return;
+    setNewHeaderInfo({
+      id: '',
+      label: '',
+      visible: true,
+      altKey: ''
+    });
+    setShowAddHeaderModal(true);
+  };
+
+  const saveNewHeader = () => {
+    if (!newHeaderInfo.id || !newHeaderInfo.label) {
+      showToast("Header ID and Label are required", "error");
+      return;
+    }
+    
+    // Check if ID already exists
+    if (tempHeaders.some(h => h.id === newHeaderInfo.id)) {
+      showToast("Header ID already exists", "error");
+      return;
+    }
+    
+    const newHeader = {
+      id: newHeaderInfo.id,
+      label: newHeaderInfo.label,
+      visible: true,
+      altKey: newHeaderInfo.altKey || null
+    };
+    
+    setTempHeaders([...tempHeaders, newHeader]);
+    setShowAddHeaderModal(false);
+    setNewHeaderInfo({
+      id: '',
+      label: '',
+      visible: true,
+      altKey: ''
+    });
+    showToast("New column added successfully");
   };
 
   const resetHeaders = () => {
     setTempHeaders([...DEFAULT_HEADERS]);
+    showToast("Headers reset to default");
+  };
+
+  const moveHeader = (index, direction) => {
+    if ((direction < 0 && index === 0) || (direction > 0 && index === tempHeaders.length - 1)) {
+      return;
+    }
+    
+    const updated = [...tempHeaders];
+    const temp = updated[index];
+    updated[index] = updated[index + direction];
+    updated[index + direction] = temp;
+    setTempHeaders(updated);
+  };
+
+  const saveHeaderChanges = async () => {
+    try {
+      if (isAdmin) {
+        const response = await fetch(`${apiUrl}/table-headers/update-material-inquiry`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({ headers: tempHeaders, email: user.email })
+        });
+        
+        if (response.ok) {
+          showToast("Table headers updated globally");
+        } else {
+          throw new Error("Failed to save headers to server");
+        }
+      }
+      
+      setTableHeaders(tempHeaders);
+      setShowHeaderModal(false);
+      localStorage.setItem('materialInquiryTableHeaders', JSON.stringify(tempHeaders));
+    } catch (error) {
+      console.error("Error saving header changes:", error);
+      showToast("Error saving header changes", "error");
+    }
   };
 
   const handleSave = async (isEdit = false) => {
@@ -346,9 +508,11 @@ export default function MaterialInquiryView() {
       setShowEditModal(false);
       setSelectedMaterial(null);
       setFormData({});
+      showToast(isEdit ? "Material updated successfully" : "Material added successfully");
     } catch (err) {
       console.error("Error saving material:", err);
       setError(err.message || "Failed to save material");
+      showToast("Error saving material", "error");
     }
   };
 
@@ -373,9 +537,11 @@ export default function MaterialInquiryView() {
       await fetchMaterials(); // Refresh data
       setShowDeleteDialog(false);
       setSelectedMaterial(null);
+      showToast("Material deleted successfully");
     } catch (err) {
       console.error("Error deleting material:", err);
       setError(err.message || "Failed to delete material");
+      showToast("Error deleting material", "error");
     }
   };
 
@@ -437,13 +603,15 @@ export default function MaterialInquiryView() {
               <Download className="w-4 h-4 mr-2" />
               Export CSV
             </button>
-            <button
-              onClick={openHeaderModal}
-              className="flex items-center px-4 py-2 text-gray-600 bg-gray-50 rounded-md hover:bg-gray-100 transition-colors"
-            >
-              <Settings className="w-4 h-4 mr-2" />
-              Columns
-            </button>
+            {isAdmin && (
+              <button
+                onClick={openHeaderModal}
+                className="flex items-center px-4 py-2 text-gray-600 bg-gray-50 rounded-md hover:bg-gray-100 transition-colors"
+              >
+                <Settings className="w-4 h-4 mr-2" />
+                Manage Columns
+              </button>
+            )}
             {isAdmin && (
               <button
                 onClick={handleAdd}

@@ -98,30 +98,40 @@ export default function MaterialInquiry() {
   }
 
   // Fetch table headers from backend
-  const fetchTableHeaders = async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/table-headers/get-material-inquiry`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include'
-      })
-      
-      if (response.ok) {
-        const result = await response.json()
-        if (result.headers && result.headers.length > 0) {
-          setTableHeaders(result.headers)
-        }
-      } else {
-        // If no custom headers found, use default
-        console.log('No custom headers found, using defaults')
-      }
-    } catch (error) {
-      console.error('Error fetching table headers:', error)
-      // Continue with default headers on error
+ const fetchTableHeaders = async () => {
+  try {
+    if (!user?.email) {
+      console.warn("No user email found, using default headers")
+      setTableHeaders(DEFAULT_HEADERS)
+      return
     }
+    
+    const response = await fetch(`${API_BASE_URL}/api/table-headers/get-material-inquiry?email=${user.email}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include'
+    })
+    
+    if (response.ok) {
+      const result = await response.json()
+      if (result.headers && result.headers.length > 0) {
+        console.log('Loaded table headers from backend:', result.headers)
+        setTableHeaders(result.headers)
+      } else {
+        console.log('No custom headers found, using defaults')
+        setTableHeaders(DEFAULT_HEADERS)
+      }
+    } else {
+      console.log('Failed to fetch headers, using defaults')
+      setTableHeaders(DEFAULT_HEADERS)
+    }
+  } catch (error) {
+    console.error('Error fetching table headers:', error)
+    setTableHeaders(DEFAULT_HEADERS)
   }
+}
 
   useEffect(() => {
     fetchData()
@@ -367,35 +377,45 @@ export default function MaterialInquiry() {
     setTempHeaders(updatedHeaders)
   }
 
-  const saveHeaderChanges = async () => {
-    setLoading(true)
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/table-headers/update-material-inquiry`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({ 
-          headers: tempHeaders,
-          isGlobal: isAdmin // Admins update global headers
-        })
-      })
-      
-      if (!response.ok) {
-        throw new Error('Failed to save header changes')
-      }
-      
-      setTableHeaders(tempHeaders)
-      setShowHeaderModal(false)
-      showToast(isAdmin ? 'Table headers updated globally' : 'Table headers updated')
-    } catch (error) {
-      console.error('Error saving header changes:', error)
-      showToast('Error saving header changes', 'error')
-    } finally {
-      setLoading(false)
+ const saveHeaderChanges = async () => {
+  setLoading(true)
+  try {
+    if (!user?.email) {
+      showToast("User email not available", "error")
+      return
     }
+    
+    const response = await fetch(`${API_BASE_URL}/api/table-headers/update-material-inquiry`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({ 
+        headers: tempHeaders,
+        email: user.email,
+        isGlobal: isAdmin // Admins update global headers
+      })
+    })
+    
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.message || 'Failed to save header changes')
+    }
+    
+    const result = await response.json()
+    console.log('Headers saved successfully:', result)
+    
+    setTableHeaders(tempHeaders)
+    setShowHeaderModal(false)
+    showToast(isAdmin ? 'Table headers updated globally' : 'Table headers updated')
+  } catch (error) {
+    console.error('Error saving header changes:', error)
+    showToast(error.message || 'Error saving header changes', 'error')
+  } finally {
+    setLoading(false)
   }
+}
 
   const deleteHeader = (index) => {
     if (!isAdmin) return

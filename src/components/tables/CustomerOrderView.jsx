@@ -43,6 +43,8 @@ const StatusBadge = ({ status, type = "delivery" }) => {
   if (type === "delivery") {
     switch (status) {
       case "Complete":
+      case "Completed":
+      case "Delivered":
         bgColor = "bg-green-100";
         textColor = "text-green-800";
         break;
@@ -51,8 +53,17 @@ const StatusBadge = ({ status, type = "delivery" }) => {
         textColor = "text-yellow-800";
         break;
       case "Cancelled":
+      case "Rejected":
         bgColor = "bg-red-100";
         textColor = "text-red-800";
+        break;
+      case "In Transit":
+        bgColor = "bg-blue-100";
+        textColor = "text-blue-800";
+        break;
+      case "Delayed":
+        bgColor = "bg-orange-100";
+        textColor = "text-orange-800";
         break;
       default:
         bgColor = "bg-gray-100";
@@ -61,6 +72,7 @@ const StatusBadge = ({ status, type = "delivery" }) => {
   } else if (type === "order") {
     switch (status) {
       case "Fulfilled":
+      case "Completed":
         bgColor = "bg-green-100";
         textColor = "text-green-800";
         break;
@@ -73,6 +85,29 @@ const StatusBadge = ({ status, type = "delivery" }) => {
         textColor = "text-orange-800";
         break;
       case "Cancelled":
+      case "Rejected":
+        bgColor = "bg-red-100";
+        textColor = "text-red-800";
+        break;
+      case "New":
+        bgColor = "bg-purple-100";
+        textColor = "text-purple-800";
+        break;
+      default:
+        bgColor = "bg-gray-100";
+        textColor = "text-gray-800";
+    }
+  } else if (type === "acceptance") {
+    switch (status) {
+      case "Accepted":
+        bgColor = "bg-green-100";
+        textColor = "text-green-800";
+        break;
+      case "Pending":
+        bgColor = "bg-yellow-100";
+        textColor = "text-yellow-800";
+        break;
+      case "Rejected":
         bgColor = "bg-red-100";
         textColor = "text-red-800";
         break;
@@ -148,6 +183,7 @@ export default function CustomerOrderView() {
   const { user } = useAuth();
   const [orders, setOrders] = useState([]);
   const [filteredOrders, setFilteredOrders] = useState([]);
+  const [tableHeaders, setTableHeaders] = useState(DEFAULT_HEADERS); // Dynamic headers
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -165,14 +201,49 @@ export default function CustomerOrderView() {
   const isAdmin = user?.role === 'admin';
   const apiUrl = "http://localhost:8000/api";
 
-  // Initialize form data
+  // Fetch table headers configuration
+  const fetchCustomerOrderHeaders = async () => {
+    try {
+      if (!user?.email) {
+        console.warn("No user email found, using default headers");
+        setTableHeaders(DEFAULT_HEADERS);
+        return;
+      }
+      
+      const headerResponse = await fetch(
+        `${apiUrl}/table-headers/get-customer-order?email=${user.email}`, 
+        { credentials: 'include' }
+      );
+      
+      if (headerResponse.ok) {
+        const data = await headerResponse.json();
+        if (data.headers && Array.isArray(data.headers)) {
+          setTableHeaders(data.headers);
+        } else {
+          setTableHeaders(DEFAULT_HEADERS);
+        }
+      } else {
+        console.warn("Failed to fetch headers, using defaults");
+        setTableHeaders(DEFAULT_HEADERS);
+      }
+    } catch (error) {
+      console.error("Error fetching customer order table headers:", error);
+      setTableHeaders(DEFAULT_HEADERS);
+    }
+  };
+
+  // Initialize form data based on current headers
   const initializeFormData = () => {
     const initialData = {};
-    DEFAULT_HEADERS.forEach(header => {
+    tableHeaders.forEach(header => {
       if (header.id === "deliveryStatus") {
         initialData[header.id] = "Pending";
       } else if (header.id === "orderStatus") {
         initialData[header.id] = "Processing";
+      } else if (header.id === "acceptanceStatus") {
+        initialData[header.id] = "Pending";
+      } else if (header.id === "statementStatus") {
+        initialData[header.id] = "Pending";
       } else {
         initialData[header.id] = "";
       }
@@ -226,7 +297,7 @@ export default function CustomerOrderView() {
           requisitionBusinessGroup: "Manufacturing",
           deliveryStatus: "Complete",
           orderStatus: "Fulfilled",
-          acceptanceStatus: "Approved",
+          acceptanceStatus: "Accepted",
           statementStatus: "Generated",
           user: "admin@example.com",
           createdAt: "2025-07-20T10:00:00Z"
@@ -246,7 +317,7 @@ export default function CustomerOrderView() {
           requisitionBusinessGroup: "Operations",
           deliveryStatus: "Pending",
           orderStatus: "Processing",
-          acceptanceStatus: "Under Review",
+          acceptanceStatus: "Pending",
           statementStatus: "Pending",
           user: "admin@example.com",
           createdAt: "2025-07-22T14:30:00Z"
@@ -260,6 +331,10 @@ export default function CustomerOrderView() {
   };
 
   useEffect(() => {
+    fetchCustomerOrderHeaders();
+  }, [user]);
+
+  useEffect(() => {
     fetchOrders();
   }, []);
 
@@ -270,12 +345,11 @@ export default function CustomerOrderView() {
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       results = results.filter(order => 
-        (order.customerNumber || "").toLowerCase().includes(term) ||
-        (order.customer || "").toLowerCase().includes(term) ||
-        (order.buyer || "").toLowerCase().includes(term) ||
-        (order.platformNo || "").toLowerCase().includes(term) ||
-        (order.poNo || "").toLowerCase().includes(term) ||
-        (order.purchaser || "").toLowerCase().includes(term)
+        tableHeaders.some(header => {
+          if (!header.visible) return false;
+          const value = order[header.id] || "";
+          return value.toString().toLowerCase().includes(term);
+        })
       );
     }
     
@@ -289,7 +363,7 @@ export default function CustomerOrderView() {
     
     setFilteredOrders(results);
     setCurrentPage(1); // Reset to first page when filters change
-  }, [searchTerm, filterDeliveryStatus, filterOrderStatus, orders]);
+  }, [searchTerm, filterDeliveryStatus, filterOrderStatus, orders, tableHeaders]);
 
   // Get paginated data
   const getPaginatedData = () => {
@@ -313,7 +387,7 @@ export default function CustomerOrderView() {
 
   const handleEdit = (order) => {
     const editData = {};
-    DEFAULT_HEADERS.forEach(header => {
+    tableHeaders.forEach(header => {
       editData[header.id] = order[header.id] || "";
     });
     setFormData(editData);
@@ -396,14 +470,14 @@ export default function CustomerOrderView() {
 
   const exportToCSV = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "#," + DEFAULT_HEADERS
+    csvContent += "#," + tableHeaders
       .filter(header => header.visible)
       .map(header => header.label)
       .join(",") + "\n";
     
     filteredOrders.forEach((row, index) => {
       csvContent += `${index + 1},`;
-      DEFAULT_HEADERS.filter(header => header.visible).forEach(header => {
+      tableHeaders.filter(header => header.visible).forEach(header => {
         const value = row[header.id] || "";
         csvContent += `"${value.toString().replace(/"/g, '""')}",`;
       });
@@ -417,6 +491,103 @@ export default function CustomerOrderView() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  // Render form field based on header type
+  const renderFormField = (header) => {
+    if (header.id === "deliveryStatus") {
+      return (
+        <select
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          value={formData[header.id] || "Pending"}
+          onChange={(e) => setFormData({ ...formData, [header.id]: e.target.value })}
+        >
+          <option value="Pending">Pending</option>
+          <option value="Complete">Complete</option>
+          <option value="Cancelled">Cancelled</option>
+          <option value="In Transit">In Transit</option>
+          <option value="Delivered">Delivered</option>
+        </select>
+      );
+    } else if (header.id === "orderStatus") {
+      return (
+        <select
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          value={formData[header.id] || "Processing"}
+          onChange={(e) => setFormData({ ...formData, [header.id]: e.target.value })}
+        >
+          <option value="Processing">Processing</option>
+          <option value="Fulfilled">Fulfilled</option>
+          <option value="Delayed">Delayed</option>
+          <option value="Cancelled">Cancelled</option>
+          <option value="New">New</option>
+          <option value="Completed">Completed</option>
+        </select>
+      );
+    } else if (header.id === "acceptanceStatus") {
+      return (
+        <select
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          value={formData[header.id] || "Pending"}
+          onChange={(e) => setFormData({ ...formData, [header.id]: e.target.value })}
+        >
+          <option value="Pending">Pending</option>
+          <option value="Accepted">Accepted</option>
+          <option value="Rejected">Rejected</option>
+        </select>
+      );
+    } else {
+      return (
+        <input
+          type={header.id === "purchaseDate" ? "date" : header.id === "orderAmount" ? "number" : "text"}
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          value={formData[header.id] || ""}
+          onChange={(e) => setFormData({ ...formData, [header.id]: e.target.value })}
+          placeholder={`Enter ${header.label.toLowerCase()}`}
+          step={header.id === "orderAmount" ? "0.01" : undefined}
+          min={header.id === "orderAmount" ? "0" : undefined}
+        />
+      );
+    }
+  };
+
+  // Render table cell based on header type
+  const renderTableCell = (header, order) => {
+    const value = order[header.id] || "";
+    
+    if (header.id === "deliveryStatus") {
+      return <StatusBadge status={value} type="delivery" />;
+    }
+    
+    if (header.id === "orderStatus") {
+      return <StatusBadge status={value} type="order" />;
+    }
+
+    if (header.id === "acceptanceStatus") {
+      return <StatusBadge status={value} type="acceptance" />;
+    }
+
+    if (header.id === "statementStatus") {
+      return <StatusBadge status={value} type="delivery" />;
+    }
+    
+    if (header.id === "purchaseDate" && value) {
+      return new Date(value).toLocaleDateString();
+    }
+    
+    if (header.id === "orderAmount" && value) {
+      return (
+        <div className="flex items-center">
+          <DollarSign className="w-4 h-4 text-green-600 mr-1" />
+          {Number(value).toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+          })}
+        </div>
+      );
+    }
+    
+    return value || "-";
   };
 
   if (isLoading) {
@@ -482,6 +653,8 @@ export default function CustomerOrderView() {
             <option value="Complete">Complete</option>
             <option value="Pending">Pending</option>
             <option value="Cancelled">Cancelled</option>
+            <option value="In Transit">In Transit</option>
+            <option value="Delivered">Delivered</option>
           </select>
           <select
             className="px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -493,6 +666,8 @@ export default function CustomerOrderView() {
             <option value="Processing">Processing</option>
             <option value="Delayed">Delayed</option>
             <option value="Cancelled">Cancelled</option>
+            <option value="New">New</option>
+            <option value="Completed">Completed</option>
           </select>
         </div>
       </div>
@@ -524,7 +699,7 @@ export default function CustomerOrderView() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">#</th>
-                {DEFAULT_HEADERS.filter(header => header.visible).map(header => (
+                {tableHeaders.filter(header => header.visible).map(header => (
                   <th key={header.id} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     {header.label}
                   </th>
@@ -539,53 +714,11 @@ export default function CustomerOrderView() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {(currentPage - 1) * rowsPerPage + index + 1}
                     </td>
-                    {DEFAULT_HEADERS.filter(header => header.visible).map(header => {
-                      const value = order[header.id] || "";
-                      
-                      if (header.id === "deliveryStatus") {
-                        return (
-                          <td key={header.id} className="px-6 py-4 whitespace-nowrap">
-                            <StatusBadge status={value} type="delivery" />
-                          </td>
-                        );
-                      }
-                      
-                      if (header.id === "orderStatus") {
-                        return (
-                          <td key={header.id} className="px-6 py-4 whitespace-nowrap">
-                            <StatusBadge status={value} type="order" />
-                          </td>
-                        );
-                      }
-                      
-                      if (header.id === "purchaseDate" && value) {
-                        return (
-                          <td key={header.id} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {new Date(value).toLocaleDateString()}
-                          </td>
-                        );
-                      }
-                      
-                      if (header.id === "orderAmount" && value) {
-                        return (
-                          <td key={header.id} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
-                            <div className="flex items-center">
-                              <DollarSign className="w-4 h-4 text-green-600 mr-1" />
-                              {Number(value).toLocaleString(undefined, {
-                                minimumFractionDigits: 2,
-                                maximumFractionDigits: 2
-                              })}
-                            </div>
-                          </td>
-                        );
-                      }
-                      
-                      return (
-                        <td key={header.id} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {value || "-"}
-                        </td>
-                      );
-                    })}
+                    {tableHeaders.filter(header => header.visible).map(header => (
+                      <td key={header.id} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {renderTableCell(header, order)}
+                      </td>
+                    ))}
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex space-x-2">
                         <button
@@ -619,7 +752,7 @@ export default function CustomerOrderView() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={DEFAULT_HEADERS.filter(h => h.visible).length + 2} className="px-6 py-4 text-center text-gray-500">
+                  <td colSpan={tableHeaders.filter(h => h.visible).length + 2} className="px-6 py-4 text-center text-gray-500">
                     No customer orders matching your criteria
                   </td>
                 </tr>
@@ -746,39 +879,23 @@ export default function CustomerOrderView() {
             <div className="bg-green-50 rounded-lg p-4">
               <h3 className="font-medium text-gray-900 mb-3">Order Details</h3>
               <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span className="font-medium text-gray-700">Customer:</span>
-                  <p className="text-gray-900">{selectedOrder.customer || "-"}</p>
-                </div>
-                <div>
-                  <span className="font-medium text-gray-700">Customer Number:</span>
-                  <p className="text-gray-900">{selectedOrder.customerNumber || "-"}</p>
-                </div>
-                <div>
-                  <span className="font-medium text-gray-700">PO Number:</span>
-                  <p className="text-gray-900">{selectedOrder.poNo || "-"}</p>
-                </div>
-                <div>
-                  <span className="font-medium text-gray-700">Order Amount:</span>
-                  <p className="text-gray-900 font-medium">
-                    {selectedOrder.orderAmount ? 
-                      `${selectedOrder.currency || ""} ${Number(selectedOrder.orderAmount).toLocaleString()}` : 
-                      "-"
-                    }
-                  </p>
-                </div>
-                <div>
-                  <span className="font-medium text-gray-700">Delivery Status:</span>
-                  <div className="mt-1">
-                    <StatusBadge status={selectedOrder.deliveryStatus} type="delivery" />
+                {tableHeaders.filter(header => header.visible).map(header => (
+                  <div key={header.id}>
+                    <span className="font-medium text-gray-700">{header.label}:</span>
+                    <div className="text-gray-900 mt-1">
+                      {header.id === "orderAmount" && selectedOrder[header.id] ? (
+                        <span className="font-medium">
+                          {selectedOrder.currency || ""} {Number(selectedOrder[header.id]).toLocaleString()}
+                        </span>
+                      ) : header.id === "deliveryStatus" || header.id === "orderStatus" || 
+                           header.id === "acceptanceStatus" || header.id === "statementStatus" ? (
+                        renderTableCell(header, selectedOrder)
+                      ) : (
+                        selectedOrder[header.id] || "-"
+                      )}
+                    </div>
                   </div>
-                </div>
-                <div>
-                  <span className="font-medium text-gray-700">Order Status:</span>
-                  <div className="mt-1">
-                    <StatusBadge status={selectedOrder.orderStatus} type="order" />
-                  </div>
-                </div>
+                ))}
               </div>
             </div>
           </div>
@@ -796,43 +913,12 @@ export default function CustomerOrderView() {
         title={showEditModal ? "Edit Customer Order" : "Add New Customer Order"}
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {DEFAULT_HEADERS.map(header => (
+          {tableHeaders.filter(header => header.visible).map(header => (
             <div key={header.id} className={header.id === "requisitionBusinessGroup" ? "md:col-span-2" : ""}>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 {header.label}
               </label>
-              {header.id === "deliveryStatus" ? (
-                <select
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  value={formData[header.id] || "Pending"}
-                  onChange={(e) => setFormData({ ...formData, [header.id]: e.target.value })}
-                >
-                  <option value="Complete">Complete</option>
-                  <option value="Pending">Pending</option>
-                  <option value="Cancelled">Cancelled</option>
-                </select>
-              ) : header.id === "orderStatus" ? (
-                <select
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  value={formData[header.id] || "Processing"}
-                  onChange={(e) => setFormData({ ...formData, [header.id]: e.target.value })}
-                >
-                  <option value="Fulfilled">Fulfilled</option>
-                  <option value="Processing">Processing</option>
-                  <option value="Delayed">Delayed</option>
-                  <option value="Cancelled">Cancelled</option>
-                </select>
-              ) : (
-                <input
-                  type={header.id === "purchaseDate" ? "date" : header.id === "orderAmount" ? "number" : "text"}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  value={formData[header.id] || ""}
-                  onChange={(e) => setFormData({ ...formData, [header.id]: e.target.value })}
-                  placeholder={`Enter ${header.label.toLowerCase()}`}
-                  step={header.id === "orderAmount" ? "0.01" : undefined}
-                  min={header.id === "orderAmount" ? "0" : undefined}
-                />
-              )}
+              {renderFormField(header)}
             </div>
           ))}
         </div>

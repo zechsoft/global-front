@@ -15,9 +15,11 @@ import {
   AlertCircle,
   CheckCircle,
   Clock,
-  XCircle
+  XCircle,
+  RefreshCw
 } from 'lucide-react';
 
+// Default fallback headers - same as the management page
 const DEFAULT_HEADERS = [
   { id: "supplierNumber", label: "Supplier Number", visible: true, altKey: "customerNumber" },
   { id: "supplier", label: "Supplier", visible: true, altKey: "Customer" },
@@ -31,6 +33,56 @@ const DEFAULT_HEADERS = [
   { id: "contactInfo", label: "Contact Info", visible: true, altKey: "ContactInfo" },
   { id: "invitationDate", label: "Invitation Date", visible: true, altKey: "InvitationDate" },
 ];
+
+const API_BASE_URL = "http://localhost:8000";
+
+// Enhanced API utility with better error handling and authentication
+const apiRequest = async (url, options = {}, authToken = null) => {
+  const headers = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+
+  // Add authorization header if token is provided
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+  }
+
+  const defaultOptions = {
+    credentials: 'include',
+    headers,
+  };
+
+  try {
+    const response = await fetch(url, { ...defaultOptions, ...options });
+    
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('Authentication failed. Please log in again.');
+      }
+      
+      let errorMessage = `HTTP error! status: ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.message || errorData.error || errorMessage;
+      } catch (parseError) {
+        try {
+          const errorText = await response.text();
+          errorMessage = errorText || errorMessage;
+        } catch (textError) {
+          // Keep default error message
+        }
+      }
+      
+      throw new Error(errorMessage);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('API Request failed:', error);
+    throw error;
+  }
+};
 
 const StatusBadge = ({ status, type = "status" }) => {
   let bgColor, textColor;
@@ -139,12 +191,36 @@ const ConfirmDialog = ({ isOpen, onClose, onConfirm, title, message }) => {
   );
 };
 
+// Toast notification component
+const ToastNotification = ({ message, type, onClose }) => {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      onClose();
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  const bgColor = type === 'success' ? 'bg-green-500' : type === 'error' ? 'bg-red-500' : 'bg-blue-500';
+  
+  return (
+    <div className={`fixed top-4 right-4 ${bgColor} text-white px-6 py-3 rounded-lg shadow-lg z-50`}>
+      <div className="flex items-center justify-between">
+        <span>{message}</span>
+        <button onClick={onClose} className="ml-4 text-white hover:text-gray-200">×</button>
+      </div>
+    </div>
+  );
+};
+
 export default function SupplierInfoView() {
-  const { user } = useAuth();
+  const { user, getAuthToken } = useAuth();
   const [suppliers, setSuppliers] = useState([]);
   const [filteredSuppliers, setFilteredSuppliers] = useState([]);
+  const [tableHeaders, setTableHeaders] = useState(DEFAULT_HEADERS); // Dynamic headers
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingHeaders, setIsLoadingHeaders] = useState(true);
   const [error, setError] = useState(null);
+  const [toast, setToast] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState("All");
   const [filterDocStatus, setFilterDocStatus] = useState("All");
@@ -158,35 +234,90 @@ export default function SupplierInfoView() {
   const [formData, setFormData] = useState({});
 
   const isAdmin = user?.role === 'admin';
-  const apiUrl = "http://localhost:8000/api";
 
-  // Initialize form data
+  // Show toast notification
+  const showToast = (message, type = 'info') => {
+    setToast({ message, type });
+  };
+
+  // Get auth token helper
+  const getToken = () => {
+    let authToken = getAuthToken();
+    if (!authToken) {
+      authToken = localStorage.getItem("token") || sessionStorage.getItem("token");
+    }
+    return authToken;
+  };
+
+  // Initialize form data based on current headers
   const initializeFormData = () => {
     const initialData = {};
-    DEFAULT_HEADERS.forEach(header => {
+    tableHeaders.forEach(header => {
       initialData[header.id] = "";
     });
     return initialData;
   };
 
+  // Fetch table headers configuration
+  const fetchTableHeaders = async () => {
+    if (!user?.email) return;
+    
+    setIsLoadingHeaders(true);
+    try {
+      const authToken = getToken();
+      
+      const headerData = await apiRequest(
+        `${API_BASE_URL}/api/table-headers/get?email=${user.email}`,
+        { method: 'GET' },
+        authToken
+      );
+      
+      if (headerData.headers) {
+        setTableHeaders(headerData.headers);
+        console.log(`Headers loaded from ${headerData.source || 'server'} for view page`);
+        
+        // Only save to localStorage if they're personal headers
+        if (headerData.source !== 'global') {
+          localStorage.setItem('supplierInfoViewTableHeaders', JSON.stringify(headerData.headers));
+        } else {
+          // If global headers, remove any personal localStorage cache
+          localStorage.removeItem('supplierInfoViewTableHeaders');
+        }
+      }
+    } catch (headerError) {
+      console.error("Error fetching table headers for view:", headerError);
+      // Try to load from localStorage as fallback
+      const savedHeaders = localStorage.getItem('supplierInfoViewTableHeaders');
+      if (savedHeaders) {
+        try {
+          setTableHeaders(JSON.parse(savedHeaders));
+          console.log("Headers loaded from localStorage for view page");
+        } catch (e) {
+          console.error("Error loading saved headers for view:", e);
+        }
+      }
+    } finally {
+      setIsLoadingHeaders(false);
+    }
+  };
+
   // Fetch suppliers data
   const fetchSuppliers = async () => {
+    if (!user?.email) return;
+    
     setIsLoading(true);
     try {
-      const response = await fetch(`${apiUrl}/suppliers/get-all`, {
-        credentials: 'include'
-      });
+      const authToken = getToken();
       
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      
+      const data = await apiRequest(`${API_BASE_URL}/api/suppliers/get-data`, {
+        method: 'POST',
+        body: JSON.stringify({ email: user.email })
+      }, authToken);
+
       if (data && Array.isArray(data.data)) {
         const dataWithId = data.data.map(item => ({
           ...item,
-          id: item._id
+          id: item._id || item.id
         }));
         setSuppliers(dataWithId);
         setFilteredSuppliers(dataWithId);
@@ -197,6 +328,12 @@ export default function SupplierInfoView() {
     } catch (err) {
       console.error("Error fetching data:", err);
       setError(err.message || "Failed to fetch supplier data");
+      
+      if (err.message.includes('Authentication failed')) {
+        showToast("Session expired. Please log in again.", "error");
+      } else {
+        showToast(err.message || "Error fetching data from server", "error");
+      }
       
       // Mock data for development/demo
       const mockData = [
@@ -240,9 +377,25 @@ export default function SupplierInfoView() {
     }
   };
 
+  // Initial data fetch
   useEffect(() => {
-    fetchSuppliers();
-  }, []);
+    if (user?.email) {
+      Promise.all([
+        fetchTableHeaders(),
+        fetchSuppliers()
+      ]);
+    }
+  }, [user]);
+
+  // Refresh function to sync with management page changes
+  const refreshData = async () => {
+    showToast("Refreshing data...", "info");
+    await Promise.all([
+      fetchTableHeaders(),
+      fetchSuppliers()
+    ]);
+    showToast("Data refreshed successfully!", "success");
+  };
 
   // Filter suppliers based on search and filter criteria
   useEffect(() => {
@@ -251,10 +404,18 @@ export default function SupplierInfoView() {
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       results = results.filter(supplier => 
-        (supplier.supplierNumber || supplier.customerNumber || "").toString().toLowerCase().includes(term) ||
-        (supplier.supplier || supplier.Customer || supplier.customerName || "").toLowerCase().includes(term) ||
-        (supplier.buyer || "").toLowerCase().includes(term) ||
-        (supplier.invitee || supplier.Invite || "").toLowerCase().includes(term)
+        tableHeaders.some(header => {
+          if (!header.visible) return false;
+          const value = header.altKey 
+            ? (supplier[header.id] || supplier[header.altKey] || "") 
+            : (supplier[header.id] || "");
+          
+          if (typeof value === 'string') {
+            return value.toLowerCase().includes(term);
+          } else {
+            return value.toString().toLowerCase().includes(term);
+          }
+        })
       );
     }
     
@@ -268,7 +429,7 @@ export default function SupplierInfoView() {
     
     setFilteredSuppliers(results);
     setCurrentPage(1); // Reset to first page when filters change
-  }, [searchTerm, filterStatus, filterDocStatus, suppliers]);
+  }, [searchTerm, filterStatus, filterDocStatus, suppliers, tableHeaders]);
 
   // Get paginated data
   const getPaginatedData = () => {
@@ -292,7 +453,7 @@ export default function SupplierInfoView() {
 
   const handleEdit = (supplier) => {
     const editData = {};
-    DEFAULT_HEADERS.forEach(header => {
+    tableHeaders.forEach(header => {
       const value = header.altKey ? 
         (supplier[header.id] || supplier[header.altKey] || "") : 
         (supplier[header.id] || "");
@@ -310,23 +471,41 @@ export default function SupplierInfoView() {
 
   const handleSave = async (isEdit = false) => {
     try {
-      const url = isEdit ? `${apiUrl}/suppliers/${selectedSupplier.id}` : `${apiUrl}/suppliers/add`;
-      const method = isEdit ? 'PUT' : 'POST';
-      const body = isEdit ? 
-        { supplierData: formData, email: user.email } : 
-        [formData, { user: user.email }];
+      const authToken = getToken();
+      
+      if (isEdit) {
+        // Update existing supplier
+        const rowToUpdate = suppliers.find(row => row._id === selectedSupplier._id || row.id === selectedSupplier.id);
+        
+        if (!rowToUpdate) {
+          throw new Error("Could not find the row to update");
+        }
+        
+        const mongoId = rowToUpdate._id || rowToUpdate.id;
+        
+        await apiRequest(`${API_BASE_URL}/api/suppliers/update`, {
+          method: 'POST',
+          body: JSON.stringify([
+            {
+              id: mongoId,
+              ...formData,
+            },
+            {"user": user.email}
+          ])
+        }, authToken);
 
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify(body)
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        showToast("Supplier updated successfully", "success");
+      } else {
+        // Add new supplier
+        await apiRequest(`${API_BASE_URL}/api/suppliers/add`, {
+          method: 'POST',
+          body: JSON.stringify([
+            formData,
+            {"user": user.email}
+          ])
+        }, authToken);
+        
+        showToast("Supplier added successfully", "success");
       }
 
       await fetchSuppliers(); // Refresh data
@@ -336,40 +515,44 @@ export default function SupplierInfoView() {
       setFormData({});
     } catch (err) {
       console.error("Error saving supplier:", err);
-      setError(err.message || "Failed to save supplier");
+      showToast(err.message || "Error saving supplier", "error");
     }
   };
 
   const handleDeleteConfirm = async () => {
     try {
-      const response = await fetch(`${apiUrl}/suppliers/${selectedSupplier.id}`, {
-        method: 'DELETE',
-        credentials: 'include'
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      const authToken = getToken();
+      
+      let mongoId = selectedSupplier._id || selectedSupplier.id;
+      
+      if (!mongoId) {
+        throw new Error("Could not determine supplier database ID");
       }
+      
+      await apiRequest(`${API_BASE_URL}/api/suppliers/${mongoId}`, {
+        method: 'DELETE'
+      }, authToken);
 
       await fetchSuppliers(); // Refresh data
       setShowDeleteDialog(false);
       setSelectedSupplier(null);
+      showToast("Supplier deleted successfully", "success");
     } catch (err) {
       console.error("Error deleting supplier:", err);
-      setError(err.message || "Failed to delete supplier");
+      showToast(err.message || "Error deleting supplier", "error");
     }
   };
 
   const exportToCSV = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "#," + DEFAULT_HEADERS
+    csvContent += "#," + tableHeaders
       .filter(header => header.visible)
       .map(header => header.label)
       .join(",") + "\n";
     
     filteredSuppliers.forEach((row, index) => {
       csvContent += `${index + 1},`;
-      DEFAULT_HEADERS.filter(header => header.visible).forEach(header => {
+      tableHeaders.filter(header => header.visible).forEach(header => {
         const value = header.altKey ? (row[header.id] || row[header.altKey] || "") : (row[header.id] || "");
         csvContent += `"${value.toString().replace(/"/g, '""')}",`;
       });
@@ -385,12 +568,17 @@ export default function SupplierInfoView() {
     document.body.removeChild(link);
   };
 
-  if (isLoading) {
+  // Get visible headers
+  const visibleHeaders = tableHeaders.filter(header => header.visible);
+
+  if (isLoading || isLoadingHeaders) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading supplier data...</p>
+          <p className="mt-4 text-gray-600">
+            {isLoadingHeaders ? "Loading table configuration..." : "Loading supplier data..."}
+          </p>
         </div>
       </div>
     );
@@ -398,6 +586,15 @@ export default function SupplierInfoView() {
 
   return (
     <div className="max-w-7xl mx-auto p-6 bg-gray-50 min-h-screen">
+      {/* Toast Notification */}
+      {toast && (
+        <ToastNotification
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
+
       {/* Header */}
       <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
         <div className="flex items-center justify-between">
@@ -406,6 +603,14 @@ export default function SupplierInfoView() {
             <p className="text-gray-600 mt-1">Manage supplier details, contacts, and categories</p>
           </div>
           <div className="flex items-center space-x-3">
+            <button
+              onClick={refreshData}
+              className="flex items-center px-4 py-2 text-gray-600 bg-gray-50 rounded-md hover:bg-gray-100 transition-colors"
+              title="Refresh data and table configuration"
+            >
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Refresh
+            </button>
             <button
               onClick={exportToCSV}
               className="flex items-center px-4 py-2 text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors"
@@ -480,6 +685,11 @@ export default function SupplierInfoView() {
       <div className="mb-4">
         <p className="text-sm text-gray-600">
           Showing {filteredSuppliers.length} of {suppliers.length} suppliers
+          {visibleHeaders.length < tableHeaders.length && (
+            <span className="ml-2 text-blue-600">
+              ({visibleHeaders.length} of {tableHeaders.length} columns visible)
+            </span>
+          )}
         </p>
       </div>
 
@@ -490,7 +700,7 @@ export default function SupplierInfoView() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">#</th>
-                {DEFAULT_HEADERS.filter(header => header.visible).map(header => (
+                {visibleHeaders.map(header => (
                   <th key={header.id} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     {header.label}
                   </th>
@@ -505,7 +715,7 @@ export default function SupplierInfoView() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {(currentPage - 1) * rowsPerPage + index + 1}
                     </td>
-                    {DEFAULT_HEADERS.filter(header => header.visible).map(header => {
+                    {visibleHeaders.map(header => {
                       const value = header.altKey ? 
                         (supplier[header.id] || supplier[header.altKey] || "") : 
                         (supplier[header.id] || "");
@@ -573,7 +783,7 @@ export default function SupplierInfoView() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={DEFAULT_HEADERS.filter(h => h.visible).length + 2} className="px-6 py-4 text-center text-gray-500">
+                  <td colSpan={visibleHeaders.length + 2} className="px-6 py-4 text-center text-gray-500">
                     No supplier data matching your criteria
                   </td>
                 </tr>
@@ -696,6 +906,36 @@ export default function SupplierInfoView() {
                 </div>
               </div>
             )}
+
+            {/* Display all supplier data based on current headers */}
+            <div className="bg-white border rounded-lg p-4">
+              <h3 className="font-medium text-gray-900 mb-3">Supplier Data</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                {visibleHeaders.map(header => {
+                  const value = header.altKey ? 
+                    (selectedSupplier[header.id] || selectedSupplier[header.altKey] || "") : 
+                    (selectedSupplier[header.id] || "");
+                  
+                  return (
+                    <div key={header.id}>
+                      <span className="font-medium text-gray-700">{header.label}:</span>
+                      <p className="text-gray-900">
+                        {header.id === "status" || header.id === "documentStatus" ? (
+                          <StatusBadge 
+                            status={value} 
+                            type={header.id === "status" ? "status" : "document"} 
+                          />
+                        ) : header.id === "invitationDate" && value ? (
+                          new Date(value).toLocaleDateString()
+                        ) : (
+                          value || "-"
+                        )}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
       </Modal>
@@ -711,7 +951,7 @@ export default function SupplierInfoView() {
         title={showEditModal ? "Edit Supplier" : "Add New Supplier"}
       >
         <div className="space-y-4">
-          {DEFAULT_HEADERS.map(header => (
+          {tableHeaders.map(header => (
             <div key={header.id}>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 {header.label}

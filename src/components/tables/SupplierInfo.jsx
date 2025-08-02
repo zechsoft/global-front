@@ -229,76 +229,73 @@ export default function SupplierInfo() {
     setToast({ message, type });
   };
 
-  // Fetch data from backend
-  useEffect(() => {
-    const fetchData = async () => {
-      if (!user?.email) return;
+// 1. Update the useEffect for fetching data (around line 120-180)
+useEffect(() => {
+  const fetchData = async () => {
+    if (!user?.email) return;
+    
+    try {
+      // Try multiple ways to get the auth token
+      let authToken = getAuthToken();
       
+      // Fallback: try to get from storage directly
+      if (!authToken) {
+        authToken = localStorage.getItem("token") || sessionStorage.getItem("token");
+      }
+      
+      console.log("Fetching data for user:", user.email);
+      console.log("Auth token available:", !!authToken);
+
+      const data = await apiRequest(`${API_BASE_URL}/api/suppliers/get-data`, {
+        method: 'POST',
+        body: JSON.stringify({ email: user.email })
+      }, authToken);
+
+      setSuppliers(data.data || []);
+      setFilteredData(data.data || []);
+      
+      // Fetch table headers - FIXED: Use correct endpoint
       try {
-        // Try multiple ways to get the auth token
-        let authToken = getAuthToken();
+        const headerData = await apiRequest(
+          `${API_BASE_URL}/api/table-headers/get?email=${user.email}`,
+          { method: 'GET' },
+          authToken
+        );
         
-        // Fallback: try to get from storage directly
-        if (!authToken) {
-          authToken = localStorage.getItem("token") || sessionStorage.getItem("token");
+        if (headerData.headers) {
+          setTableHeaders(headerData.headers);
         }
-        
-        console.log("Fetching data for user:", user.email);
-        console.log("Auth token available:", !!authToken);
-
-        const data = await apiRequest(`${API_BASE_URL}/api/suppliers/get-data`, {
-          method: 'POST',
-          body: JSON.stringify({ email: user.email })
-        }, authToken);
-
-        setSuppliers(data.data || []);
-        setFilteredData(data.data || []);
-        
-        // Fetch table headers
-        try {
-          const headerData = await apiRequest(
-            `${API_BASE_URL}/api/table-headers/get?email=${user.email}`,
-            { method: 'GET' },
-            authToken
-          );
-          
-          if (headerData.headers) {
-            setTableHeaders(headerData.headers);
+      } catch (headerError) {
+        console.error("Error fetching table headers:", headerError);
+        // Try to load from localStorage as fallback - FIXED: Use consistent key
+        const savedHeaders = localStorage.getItem('supplierInfoTableHeaders');
+        if (savedHeaders) {
+          try {
+            setTableHeaders(JSON.parse(savedHeaders));
+          } catch (e) {
+            console.error("Error loading saved headers:", e);
           }
-        } catch (headerError) {
-          console.error("Error fetching table headers:", headerError);
-          // Try to load from localStorage as fallback
-          const savedHeaders = localStorage.getItem('supplierTableHeaders');
-          if (savedHeaders) {
-            try {
-              setTableHeaders(JSON.parse(savedHeaders));
-            } catch (e) {
-              console.error("Error loading saved headers:", e);
-            }
-          }
-        }
-      } catch (error) {
-        console.error("Error fetching data:", error);
-        
-        // If it's an auth error, suggest re-login
-        if (error.message.includes('Authentication failed')) {
-          showToast("Session expired. Please log in again.", "error");
-          // You might want to redirect to login here
-          // window.location.href = '/login';
-        } else {
-          showToast(error.message || "Error fetching data from server", "error");
         }
       }
-    };
+    } catch (error) {
+      console.error("Error fetching data:", error);
+      
+      // If it's an auth error, suggest re-login
+      if (error.message.includes('Authentication failed')) {
+        showToast("Session expired. Please log in again.", "error");
+      } else {
+        showToast(error.message || "Error fetching data from server", "error");
+      }
+    }
+  };
 
-    fetchData();
-  }, [user, getAuthToken]);
+  fetchData();
+}, [user, getAuthToken]);
 
   // Save headers to localStorage whenever they change
-  useEffect(() => {
-    localStorage.setItem('supplierTableHeaders', JSON.stringify(tableHeaders));
-  }, [tableHeaders]);
-
+useEffect(() => {
+  localStorage.setItem('supplierInfoTableHeaders', JSON.stringify(tableHeaders));
+}, [tableHeaders]);
   // Filter function
   const filterRow = (row) => {
     if (searchTerm === "") return true;
@@ -396,6 +393,13 @@ export default function SupplierInfo() {
     setRowToDelete(id);
     setShowDeleteDialog(true);
   };
+  useEffect(() => {
+  // Only save to localStorage if user is not admin or if these are personal headers
+  // This prevents overriding global header behavior
+  if (!isAdmin || !saveAsGlobal) {
+    localStorage.setItem('supplierInfoTableHeaders', JSON.stringify(tableHeaders));
+  }
+}, [tableHeaders, isAdmin, saveAsGlobal]);
 
   const confirmDelete = async () => {
     try {
@@ -581,52 +585,131 @@ export default function SupplierInfo() {
     setTempHeaders(updatedHeaders);
   };
 
-  const saveHeaderChanges = async () => {
-    setIsSaving(true);
+const saveHeaderChanges = async () => {
+  setIsSaving(true);
+  try {
+    // Try multiple ways to get the auth token
+    let authToken = getAuthToken();
+    
+    // Fallback: try to get from storage directly
+    if (!authToken) {
+      authToken = localStorage.getItem("token") || sessionStorage.getItem("token");
+    }
+    
+    const payload = {
+      headers: tempHeaders,
+      email: user.email,
+      isGlobal: isAdmin && saveAsGlobal
+    };
+    
+    console.log("Making request with payload:", payload);
+    console.log("Auth token present:", !!authToken);
+    
+    const response = await apiRequest(`${API_BASE_URL}/api/table-headers/update`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }, authToken);
+    
+    setTableHeaders(tempHeaders);
+    setShowHeaderModal(false);
+    
+    // Handle localStorage based on whether it's global or personal
+    if (payload.isGlobal) {
+      // If saving as global, remove personal localStorage entry
+      // so it will fetch global headers next time
+      localStorage.removeItem('supplierInfoTableHeaders');
+      showToast("Global table headers updated successfully! All users will see these changes.", "success");
+    } else {
+      // Save personal headers to localStorage
+      localStorage.setItem('supplierInfoTableHeaders', JSON.stringify(tempHeaders));
+      showToast("Personal table headers updated successfully!", "success");
+    }
+    
+    // If admin saved global headers, they should see the changes immediately
+    if (payload.isGlobal && response.adminPersonalHeadersCleared) {
+      console.log("Admin personal headers cleared, global headers now active");
+    }
+    
+  } catch (error) {
+    console.error("Error saving header changes:", error);
+    showToast(error.message || "Error saving header changes", "error");
+  } finally {
+    setIsSaving(false);
+  }
+};
+
+// Also update the data fetching useEffect to handle this better
+
+useEffect(() => {
+  const fetchData = async () => {
+    if (!user?.email) return;
+    
     try {
-      // Try multiple ways to get the auth token
       let authToken = getAuthToken();
       
-      // Fallback: try to get from storage directly
       if (!authToken) {
         authToken = localStorage.getItem("token") || sessionStorage.getItem("token");
       }
       
-      // If still no token, try to use cookies (for credential-based auth)
-      if (!authToken) {
-        console.log("No token found, attempting request with credentials only");
-      }
-      
-      const payload = {
-        headers: tempHeaders,
-        email: user.email,
-        isGlobal: isAdmin && saveAsGlobal
-      };
-      
-      console.log("Making request with payload:", payload);
-      console.log("Auth token present:", !!authToken);
-      
-      await apiRequest(`${API_BASE_URL}/api/table-headers/update`, {
+      console.log("Fetching data for user:", user.email);
+      console.log("Auth token available:", !!authToken);
+
+      const data = await apiRequest(`${API_BASE_URL}/api/suppliers/get-data`, {
         method: 'POST',
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ email: user.email })
       }, authToken);
+
+      setSuppliers(data.data || []);
+      setFilteredData(data.data || []);
       
-      setTableHeaders(tempHeaders);
-      setShowHeaderModal(false);
-      localStorage.setItem('supplierTableHeaders', JSON.stringify(tempHeaders));
-      
-      showToast(
-        payload.isGlobal ? "Table headers updated globally" : "Table headers updated",
-        "success"
-      );
-      
+      // Fetch table headers
+      try {
+        const headerData = await apiRequest(
+          `${API_BASE_URL}/api/table-headers/get?email=${user.email}`,
+          { method: 'GET' },
+          authToken
+        );
+        
+        if (headerData.headers) {
+          setTableHeaders(headerData.headers);
+          console.log(`Headers loaded from ${headerData.source || 'server'}`);
+          
+          // Only save to localStorage if they're personal headers
+          if (headerData.source !== 'global') {
+            localStorage.setItem('supplierInfoTableHeaders', JSON.stringify(headerData.headers));
+          } else {
+            // If global headers, remove any personal localStorage cache
+            localStorage.removeItem('supplierInfoTableHeaders');
+          }
+        }
+      } catch (headerError) {
+        console.error("Error fetching table headers:", headerError);
+        // Try to load from localStorage as fallback only if not admin
+        // or if admin hasn't recently updated global settings
+        if (!isAdmin) {
+          const savedHeaders = localStorage.getItem('supplierInfoTableHeaders');
+          if (savedHeaders) {
+            try {
+              setTableHeaders(JSON.parse(savedHeaders));
+            } catch (e) {
+              console.error("Error loading saved headers:", e);
+            }
+          }
+        }
+      }
     } catch (error) {
-      console.error("Error saving header changes:", error);
-      showToast(error.message || "Error saving header changes", "error");
-    } finally {
-      setIsSaving(false);
+      console.error("Error fetching data:", error);
+      
+      if (error.message.includes('Authentication failed')) {
+        showToast("Session expired. Please log in again.", "error");
+      } else {
+        showToast(error.message || "Error fetching data from server", "error");
+      }
     }
   };
+
+  fetchData();
+}, [user, getAuthToken, isAdmin]);
 
   const deleteHeader = (index) => {
     if (!isAdmin) return;

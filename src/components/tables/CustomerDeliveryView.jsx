@@ -15,10 +15,33 @@ import {
   AlertCircle,
   CheckCircle,
   Clock,
-  XCircle
+  XCircle,
+  Settings,
+  MapPin,
+  Menu as MenuIcon,
+  ChevronUp,
+  ChevronDown,
+  Save,
+  X
 } from 'lucide-react';
 
-const DEFAULT_HEADERS = [
+// Backend API URL
+const API_URL = "http://localhost:8000";
+
+// API Configuration - Set this to true to use separate delivery endpoints
+// Set to false to use the existing customer-delivery-notices endpoints
+const USE_SEPARATE_DELIVERY_API = false;
+
+const API_ENDPOINTS = {
+  getData: USE_SEPARATE_DELIVERY_API ? '/api/customer-deliveries/get-data' : '/api/customer-delivery-notices/get-data',
+  add: USE_SEPARATE_DELIVERY_API ? '/api/customer-deliveries/add' : '/api/customer-delivery-notices/add',
+  update: USE_SEPARATE_DELIVERY_API ? '/api/customer-deliveries' : '/api/customer-delivery-notices',
+  delete: USE_SEPARATE_DELIVERY_API ? '/api/customer-deliveries' : '/api/customer-delivery-notices',
+  headers: '/api/table-headers/get-customer-delivery'
+};
+
+// Fallback headers - will be overridden by server/localStorage
+const FALLBACK_HEADERS = [
   { id: "OrderNumber", label: "Order Number", visible: true },
   { id: "MaterialCategory", label: "Material Category", visible: true },
   { id: "Vendor", label: "Vendor", visible: true },
@@ -33,16 +56,21 @@ const DEFAULT_HEADERS = [
 const StatusBadge = ({ status }) => {
   let bgColor, textColor;
   
-  switch (status) {
-    case "Delivered":
+  switch (status?.toLowerCase()) {
+    case "delivered":
       bgColor = "bg-green-100";
       textColor = "text-green-800";
       break;
-    case "Pending":
+    case "pending":
+    case "scheduled":
       bgColor = "bg-yellow-100";
       textColor = "text-yellow-800";
       break;
-    case "Cancelled":
+    case "in transit":
+      bgColor = "bg-blue-100";
+      textColor = "text-blue-800";
+      break;
+    case "cancelled":
       bgColor = "bg-red-100";
       textColor = "text-red-800";
       break;
@@ -54,6 +82,34 @@ const StatusBadge = ({ status }) => {
   return (
     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${bgColor} ${textColor}`}>
       {status}
+    </span>
+  );
+};
+
+const PriorityBadge = ({ priority }) => {
+  let bgColor, textColor;
+  
+  switch (priority?.toLowerCase()) {
+    case "high":
+      bgColor = "bg-red-100";
+      textColor = "text-red-800";
+      break;
+    case "medium":
+      bgColor = "bg-yellow-100";
+      textColor = "text-yellow-800";
+      break;
+    case "low":
+      bgColor = "bg-green-100";
+      textColor = "text-green-800";
+      break;
+    default:
+      bgColor = "bg-gray-100";
+      textColor = "text-gray-800";
+  }
+
+  return (
+    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${bgColor} ${textColor}`}>
+      {priority}
     </span>
   );
 };
@@ -149,6 +205,7 @@ export default function CustomerDeliveryView() {
   const { user } = useAuth();
   const [notices, setNotices] = useState([]);
   const [filteredNotices, setFilteredNotices] = useState([]);
+  const [tableHeaders, setTableHeaders] = useState(FALLBACK_HEADERS); // Dynamic headers
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -159,25 +216,47 @@ export default function CustomerDeliveryView() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showHeaderModal, setShowHeaderModal] = useState(false);
+  const [showTableOptionsDropdown, setShowTableOptionsDropdown] = useState(false);
   const [selectedNotice, setSelectedNotice] = useState(null);
   const [formData, setFormData] = useState({});
   const [toast, setToast] = useState(null);
+  const [tempHeaders, setTempHeaders] = useState([]);
+  const [editingHeader, setEditingHeader] = useState(null);
+  const [newHeaderName, setNewHeaderName] = useState('');
 
   const isAdmin = user?.role === 'admin';
-  const apiUrl = "http://localhost:8000/api";
 
   const showToast = (message, type) => {
     setToast({ message, type });
   };
 
-  // Initialize form data
+  // Handle clicking outside dropdown to close it
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (!event.target.closest('.table-options-dropdown')) {
+        setShowTableOptionsDropdown(false);
+      }
+    };
+
+    if (showTableOptionsDropdown) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [showTableOptionsDropdown]);
+
+  // Initialize form data based on current headers
   const initializeFormData = () => {
     const initialData = {};
-    DEFAULT_HEADERS.forEach(header => {
-      if (header.id === 'Status') {
+    tableHeaders.forEach(header => {
+      if (header.id === 'Status' || header.id === 'status') {
         initialData[header.id] = 'Pending';
-      } else if (header.id === 'Created') {
+      } else if (header.id === 'Created' || header.id === 'scheduledDate') {
         initialData[header.id] = new Date().toISOString().split('T')[0];
+      } else if (header.id === 'priority') {
+        initialData[header.id] = 'Medium';
+      } else if (header.id === 'quantity') {
+        initialData[header.id] = '';
       } else {
         initialData[header.id] = '';
       }
@@ -185,11 +264,48 @@ export default function CustomerDeliveryView() {
     return initialData;
   };
 
+  // Fetch headers configuration
+  const fetchHeaders = async () => {
+    try {
+      const headerResponse = await fetch(
+        `${API_URL}${API_ENDPOINTS.headers}?email=${user?.email}`,
+        { credentials: 'include' }
+      );
+      
+      if (headerResponse.ok) {
+        const headerResult = await headerResponse.json();
+        if (headerResult.headers && Array.isArray(headerResult.headers)) {
+          setTableHeaders(headerResult.headers);
+          return;
+        }
+      }
+    } catch (headerError) {
+      console.error("Error fetching table headers:", headerError);
+    }
+    
+    // Fallback to localStorage
+    const savedHeaders = localStorage.getItem('customerDeliveryHeaders');
+    if (savedHeaders) {
+      try {
+        const parsedHeaders = JSON.parse(savedHeaders);
+        if (Array.isArray(parsedHeaders)) {
+          setTableHeaders(parsedHeaders);
+          return;
+        }
+      } catch (e) {
+        console.error("Error parsing saved headers:", e);
+      }
+    }
+    
+    // Final fallback to default headers
+    setTableHeaders(FALLBACK_HEADERS);
+  };
+
   // Fetch notices data
   const fetchNotices = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${apiUrl}/customer-delivery-notices/get-data`, {
+      const response = await fetch(`${API_URL}${API_ENDPOINTS.getData}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -205,9 +321,14 @@ export default function CustomerDeliveryView() {
       const data = await response.json();
       
       if (data && Array.isArray(data.data)) {
-        const dataWithId = data.data.map(item => ({
+        const dataWithId = data.data.map((item, index) => ({
           ...item,
-          id: item._id
+          id: item._id || item.id || `ITEM-${index + 1}`,
+          // Map common fields to ensure compatibility
+          OrderNumber: item.OrderNumber || item.orderId || item.id,
+          MaterialCategory: item.MaterialCategory || item.product,
+          Status: item.Status || item.status,
+          Created: item.Created || item.scheduledDate || item.createdAt,
         }));
         setNotices(dataWithId);
         setFilteredNotices(dataWithId);
@@ -219,33 +340,55 @@ export default function CustomerDeliveryView() {
       console.error("Error fetching data:", err);
       setError(err.message || "Failed to fetch delivery notices");
       
-      // Mock data for development/demo
+      // Mock data for development/demo - using flexible structure
       const mockData = [
         {
           id: "1",
           OrderNumber: "ORD001",
+          orderId: "ORD001",
           MaterialCategory: "Electronics",
+          product: "Electronic Components",
           Vendor: "ABC Electronics Ltd",
+          customer: "ABC Electronics Ltd",
           Invitee: "John Doe",
           HostInviterContactInfo: "john@example.com",
+          deliveryAddress: "123 Tech Street, Silicon Valley, CA",
           Sender: "Jane Smith",
+          driver: "Jane Smith",
           Status: "Delivered",
+          status: "Delivered",
           SupplementTemplate: "Standard Template",
           Created: "2025-07-20",
+          scheduledDate: "2025-07-20",
+          quantity: 500,
+          trackingNumber: "TRK123456789",
+          vehicleNo: "TRK-001",
+          priority: "High",
           user: "admin@example.com",
           createdAt: "2025-07-20T10:00:00Z"
         },
         {
           id: "2",
           OrderNumber: "ORD002",
+          orderId: "ORD002",
           MaterialCategory: "Chemicals",
+          product: "Steel Sheets",
           Vendor: "XYZ Chemicals Inc",
+          customer: "Manufacturing Corp",
           Invitee: "Sarah Wilson",
           HostInviterContactInfo: "sarah@example.com",
+          deliveryAddress: "456 Industrial Blvd, Detroit, MI",
           Sender: "Bob Brown",
+          driver: "Sarah Wilson",
           Status: "Pending",
+          status: "Scheduled",
           SupplementTemplate: "Chemical Template",
           Created: "2025-07-22",
+          scheduledDate: "2025-07-22",
+          quantity: 200,
+          trackingNumber: "TRK123456790",
+          vehicleNo: "TRK-002",
+          priority: "Medium",
           user: "admin@example.com",
           createdAt: "2025-07-22T14:30:00Z"
         }
@@ -259,9 +402,18 @@ export default function CustomerDeliveryView() {
 
   useEffect(() => {
     if (user) {
-      fetchNotices();
+      fetchHeaders().then(() => {
+        fetchNotices();
+      });
     }
   }, [user]);
+
+  // Save header configuration to localStorage when changed
+  useEffect(() => {
+    if (tableHeaders.length > 0) {
+      localStorage.setItem('customerDeliveryHeaders', JSON.stringify(tableHeaders));
+    }
+  }, [tableHeaders]);
 
   // Filter notices based on search and filter criteria
   useEffect(() => {
@@ -269,21 +421,25 @@ export default function CustomerDeliveryView() {
     
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
-      results = results.filter(notice => 
-        (notice.OrderNumber || "").toString().toLowerCase().includes(term) ||
-        (notice.MaterialCategory || "").toLowerCase().includes(term) ||
-        (notice.Vendor || "").toLowerCase().includes(term) ||
-        (notice.Invitee || "").toLowerCase().includes(term)
-      );
+      results = results.filter(notice => {
+        return tableHeaders.some(header => {
+          if (!header.visible) return false;
+          const value = notice[header.id] || "";
+          return value.toString().toLowerCase().includes(term);
+        });
+      });
     }
     
     if (filterStatus !== "All") {
-      results = results.filter(notice => notice.Status === filterStatus);
+      results = results.filter(notice => {
+        const status = notice.Status || notice.status || "";
+        return status.toLowerCase() === filterStatus.toLowerCase();
+      });
     }
     
     setFilteredNotices(results);
     setCurrentPage(1); // Reset to first page when filters change
-  }, [searchTerm, filterStatus, notices]);
+  }, [searchTerm, filterStatus, notices, tableHeaders]);
 
   // Get paginated data
   const getPaginatedData = () => {
@@ -307,7 +463,7 @@ export default function CustomerDeliveryView() {
 
   const handleEdit = (notice) => {
     const editData = {};
-    DEFAULT_HEADERS.forEach(header => {
+    tableHeaders.forEach(header => {
       const value = notice[header.id] || "";
       editData[header.id] = value;
     });
@@ -327,22 +483,21 @@ export default function CustomerDeliveryView() {
         throw new Error("User authentication required");
       }
 
-      // Validate required fields
-      if (!formData.OrderNumber?.trim()) {
-        throw new Error("Order Number is required");
-      }
-      
-      if (!formData.MaterialCategory?.trim()) {
-        throw new Error("Material Category is required");
-      }
-      
-      if (!formData.Vendor?.trim()) {
-        throw new Error("Vendor is required");
+      // Validate required fields based on current headers
+      const requiredFields = ['OrderNumber', 'orderId', 'MaterialCategory', 'product', 'Vendor', 'customer'];
+      const missingRequired = requiredFields.find(field => {
+        const headerExists = tableHeaders.some(h => h.id === field);
+        return headerExists && !formData[field]?.trim();
+      });
+
+      if (missingRequired) {
+        const headerLabel = tableHeaders.find(h => h.id === missingRequired)?.label || missingRequired;
+        throw new Error(`${headerLabel} is required`);
       }
 
       const url = isEdit ? 
-        `${apiUrl}/customer-delivery-notices/${selectedNotice.id}` : 
-        `${apiUrl}/customer-delivery-notices/add`;
+        `${API_URL}${API_ENDPOINTS.update}/${selectedNotice.id}` : 
+        `${API_URL}${API_ENDPOINTS.add}`;
       const method = isEdit ? 'PUT' : 'POST';
       
       const body = isEdit ? {
@@ -392,7 +547,7 @@ export default function CustomerDeliveryView() {
         throw new Error("User authentication required");
       }
 
-      const response = await fetch(`${apiUrl}/customer-delivery-notices/${selectedNotice.id}`, {
+      const response = await fetch(`${API_URL}${API_ENDPOINTS.delete}/${selectedNotice.id}`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -415,16 +570,94 @@ export default function CustomerDeliveryView() {
     }
   };
 
+  // Header management functions
+  const openHeaderModal = () => {
+    setTempHeaders([...tableHeaders]);
+    setShowHeaderModal(true);
+    setEditingHeader(null);
+  };
+
+  const handleHeaderVisibilityChange = (index) => {
+    const updatedHeaders = [...tempHeaders];
+    updatedHeaders[index].visible = !updatedHeaders[index].visible;
+    setTempHeaders(updatedHeaders);
+  };
+
+  const handleEditHeaderLabel = (index) => {
+    setEditingHeader(index);
+    setNewHeaderName(tempHeaders[index].label);
+  };
+
+  const saveHeaderLabel = () => {
+    if (editingHeader !== null && newHeaderName.trim()) {
+      const updatedHeaders = [...tempHeaders];
+      updatedHeaders[editingHeader].label = newHeaderName.trim();
+      setTempHeaders(updatedHeaders);
+      setEditingHeader(null);
+      setNewHeaderName("");
+    }
+  };
+
+  const moveHeader = (index, direction) => {
+    if ((direction < 0 && index === 0) || (direction > 0 && index === tempHeaders.length - 1)) {
+      return;
+    }
+    
+    const updatedHeaders = [...tempHeaders];
+    const temp = updatedHeaders[index];
+    updatedHeaders[index] = updatedHeaders[index + direction];
+    updatedHeaders[index + direction] = temp;
+    setTempHeaders(updatedHeaders);
+  };
+
+  const saveHeaderChanges = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/table-headers/update-customer-delivery`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          headers: tempHeaders,
+          email: user?.email,
+          isGlobal: isAdmin
+        })
+      });
+
+      if (response.ok) {
+        setTableHeaders(tempHeaders);
+        setShowHeaderModal(false);
+        showToast(isAdmin ? "Global header settings saved!" : "Header settings saved!", "success");
+      } else {
+        // Fallback to localStorage if API fails
+        setTableHeaders(tempHeaders);
+        setShowHeaderModal(false);
+        showToast("Header settings saved locally", "success");
+      }
+    } catch (error) {
+      console.error("Error saving header changes:", error);
+      // Fallback to localStorage
+      setTableHeaders(tempHeaders);
+      setShowHeaderModal(false);
+      showToast("Header settings saved locally", "success");
+    }
+  };
+
+  const resetHeadersToDefault = () => {
+    setTempHeaders([...FALLBACK_HEADERS]);
+  };
+
   const exportToCSV = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "#," + DEFAULT_HEADERS
+    csvContent += "#," + tableHeaders
       .filter(header => header.visible)
       .map(header => header.label)
       .join(",") + "\n";
     
     filteredNotices.forEach((row, index) => {
       csvContent += `${index + 1},`;
-      DEFAULT_HEADERS.filter(header => header.visible).forEach(header => {
+      tableHeaders.filter(header => header.visible).forEach(header => {
         const value = row[header.id] || "";
         csvContent += `"${value.toString().replace(/"/g, '""')}",`;
       });
@@ -440,6 +673,76 @@ export default function CustomerDeliveryView() {
     document.body.removeChild(link);
     
     showToast(`Exported ${filteredNotices.length} delivery notices to CSV`, "success");
+  };
+
+  // Render cell content based on field type
+  const renderCellContent = (notice, header) => {
+    const value = notice[header.id] || "";
+    
+    if (header.id === "Status" || header.id === "status") {
+      return <StatusBadge status={value} />;
+    }
+    
+    if (header.id === "priority") {
+      return <PriorityBadge priority={value} />;
+    }
+    
+    if (header.id === "Created" || header.id === "scheduledDate" || header.id === "actualDate") {
+      if (value) {
+        return (
+          <div className="flex items-center text-sm text-gray-900">
+            <Clock className="w-4 h-4 mr-1 text-gray-400" />
+            {new Date(value).toLocaleDateString()}
+          </div>
+        );
+      }
+      return "-";
+    }
+    
+    if (header.id === "deliveryAddress") {
+      return (
+        <div className="flex items-center text-sm text-gray-900 max-w-xs">
+          <MapPin className="w-4 h-4 mr-1 text-gray-400 flex-shrink-0" />
+          <div className="truncate" title={value}>
+            {value || "-"}
+          </div>
+        </div>
+      );
+    }
+    
+    if (header.id === "trackingNumber") {
+      return (
+        <div className="text-sm font-mono text-gray-900">
+          {value || "-"}
+        </div>
+      );
+    }
+    
+    if (header.id === "customer" || header.id === "Vendor") {
+      const quantity = notice.quantity;
+      return (
+        <div>
+          <div className="text-sm font-medium text-gray-900">{value || "-"}</div>
+          {quantity && (
+            <div className="text-sm text-gray-500">Qty: {quantity}</div>
+          )}
+        </div>
+      );
+    }
+    
+    if (header.id === "driver" || header.id === "Sender") {
+      const vehicleNo = notice.vehicleNo;
+      return (
+        <div>
+          <div className="text-sm text-gray-900">{value || "-"}</div>
+          {vehicleNo && (
+            <div className="text-sm text-gray-500">{vehicleNo}</div>
+          )}
+        </div>
+      );
+    }
+    
+    return value || "-";
   };
 
   if (isLoading) {
@@ -481,13 +784,37 @@ export default function CustomerDeliveryView() {
               Export CSV
             </button>
             {isAdmin && (
-              <button
-                onClick={handleAdd}
-                className="flex items-center px-4 py-2 text-white bg-green-600 rounded-md hover:bg-green-700 transition-colors"
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Add Notice
-              </button>
+              <>
+                <div className="relative table-options-dropdown">
+                  <button 
+                    onClick={() => setShowTableOptionsDropdown(!showTableOptionsDropdown)}
+                    className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+                  >
+                    <Settings className="w-4 h-4" />
+                    <span>Table Options</span>
+                  </button>
+                  {showTableOptionsDropdown && (
+                    <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg border z-10">
+                      <button
+                        onClick={() => {
+                          openHeaderModal();
+                          setShowTableOptionsDropdown(false);
+                        }}
+                        className="block w-full text-left px-4 py-2 text-sm hover:bg-gray-50"
+                      >
+                        Manage Columns
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={handleAdd}
+                  className="flex items-center px-4 py-2 text-white bg-green-600 rounded-md hover:bg-green-700 transition-colors"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Notice
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -513,8 +840,11 @@ export default function CustomerDeliveryView() {
           >
             <option value="All">All Statuses</option>
             <option value="Pending">Pending</option>
+            <option value="Scheduled">Scheduled</option>
+            <option value="In Transit">In Transit</option>
             <option value="Delivered">Delivered</option>
             <option value="Cancelled">Cancelled</option>
+            <option value="Delayed">Delayed</option>
           </select>
         </div>
       </div>
@@ -546,7 +876,7 @@ export default function CustomerDeliveryView() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">#</th>
-                {DEFAULT_HEADERS.filter(header => header.visible).map(header => (
+                {tableHeaders.filter(header => header.visible).map(header => (
                   <th key={header.id} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     {header.label}
                   </th>
@@ -561,31 +891,11 @@ export default function CustomerDeliveryView() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {(currentPage - 1) * rowsPerPage + index + 1}
                     </td>
-                    {DEFAULT_HEADERS.filter(header => header.visible).map(header => {
-                      const value = notice[header.id] || "";
-                      
-                      if (header.id === "Status") {
-                        return (
-                          <td key={header.id} className="px-6 py-4 whitespace-nowrap">
-                            <StatusBadge status={value} />
-                          </td>
-                        );
-                      }
-                      
-                      if (header.id === "Created" && value) {
-                        return (
-                          <td key={header.id} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {new Date(value).toLocaleDateString()}
-                          </td>
-                        );
-                      }
-                      
-                      return (
-                        <td key={header.id} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {value || "-"}
-                        </td>
-                      );
-                    })}
+                    {tableHeaders.filter(header => header.visible).map(header => (
+                      <td key={header.id} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {renderCellContent(notice, header)}
+                      </td>
+                    ))}
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex space-x-2">
                         <button
@@ -619,7 +929,7 @@ export default function CustomerDeliveryView() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={DEFAULT_HEADERS.filter(h => h.visible).length + 2} className="px-6 py-4 text-center text-gray-500">
+                  <td colSpan={tableHeaders.filter(h => h.visible).length + 2} className="px-6 py-4 text-center text-gray-500">
                     No delivery notices matching your criteria
                   </td>
                 </tr>
@@ -710,6 +1020,20 @@ export default function CustomerDeliveryView() {
         {selectedNotice && (
           <div className="space-y-4">
             <div className="bg-gray-50 rounded-lg p-4">
+              <h3 className="font-medium text-gray-900 mb-2">Notice Information</h3>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                {tableHeaders.filter(h => h.visible).map(header => (
+                  <div key={header.id}>
+                    <span className="font-medium text-gray-700">{header.label}:</span>
+                    <div className="text-gray-900 mt-1">
+                      {renderCellContent(selectedNotice, header)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            
+            <div className="bg-gray-50 rounded-lg p-4">
               <h3 className="font-medium text-gray-900 mb-2">Entry Information</h3>
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
@@ -758,123 +1082,71 @@ export default function CustomerDeliveryView() {
       >
         <div className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Order Number <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.OrderNumber || ""}
-                onChange={(e) => setFormData({ ...formData, OrderNumber: e.target.value })}
-                placeholder="Enter order number"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Material Category <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.MaterialCategory || ""}
-                onChange={(e) => setFormData({ ...formData, MaterialCategory: e.target.value })}
-                placeholder="Enter material category"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Vendor <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.Vendor || ""}
-                onChange={(e) => setFormData({ ...formData, Vendor: e.target.value })}
-                placeholder="Enter vendor name"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Invitee
-              </label>
-              <input
-                type="text"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.Invitee || ""}
-                onChange={(e) => setFormData({ ...formData, Invitee: e.target.value })}
-                placeholder="Enter invitee name"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Host/Inviter Contact Info
-              </label>
-              <input
-                type="text"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.HostInviterContactInfo || ""}
-                onChange={(e) => setFormData({ ...formData, HostInviterContactInfo: e.target.value })}
-                placeholder="Enter contact information"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Sender
-              </label>
-              <input
-                type="text"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.Sender || ""}
-                onChange={(e) => setFormData({ ...formData, Sender: e.target.value })}
-                placeholder="Enter sender name"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Status
-              </label>
-              <select
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.Status || "Pending"}
-                onChange={(e) => setFormData({ ...formData, Status: e.target.value })}
-              >
-                <option value="Pending">Pending</option>
-                <option value="Delivered">Delivered</option>
-                <option value="Cancelled">Cancelled</option>
-              </select>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Supplement Template
-              </label>
-              <input
-                type="text"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.SupplementTemplate || ""}
-                onChange={(e) => setFormData({ ...formData, SupplementTemplate: e.target.value })}
-                placeholder="Enter supplement template"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Created Date
-              </label>
-              <input
-                type="date"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={formData.Created || ""}
-                onChange={(e) => setFormData({ ...formData, Created: e.target.value })}
-              />
-            </div>
+            {tableHeaders.filter(header => header.visible && header.id !== 'actions').map(header => (
+              <div key={header.id} className={header.id === 'deliveryAddress' ? 'md:col-span-2' : ''}>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {header.label}
+                  {['OrderNumber', 'orderId', 'MaterialCategory', 'product', 'Vendor', 'customer'].includes(header.id) && 
+                    <span className="text-red-500">*</span>
+                  }
+                </label>
+                {header.id === 'deliveryAddress' ? (
+                  <textarea
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    value={formData[header.id] || ""}
+                    onChange={(e) => setFormData({ ...formData, [header.id]: e.target.value })}
+                    placeholder={`Enter ${header.label.toLowerCase()}`}
+                    rows={2}
+                  />
+                ) : header.id === 'Status' || header.id === 'status' ? (
+                  <select
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    value={formData[header.id] || "Pending"}
+                    onChange={(e) => setFormData({ ...formData, [header.id]: e.target.value })}
+                  >
+                    <option value="Pending">Pending</option>
+                    <option value="Scheduled">Scheduled</option>
+                    <option value="In Transit">In Transit</option>
+                    <option value="Delivered">Delivered</option>
+                    <option value="Cancelled">Cancelled</option>
+                    <option value="Delayed">Delayed</option>
+                  </select>
+                ) : header.id === 'priority' ? (
+                  <select
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    value={formData[header.id] || "Medium"}
+                    onChange={(e) => setFormData({ ...formData, [header.id]: e.target.value })}
+                  >
+                    <option value="Low">Low</option>
+                    <option value="Medium">Medium</option>
+                    <option value="High">High</option>
+                  </select>
+                ) : header.id === 'Created' || header.id === 'scheduledDate' || header.id === 'actualDate' ? (
+                  <input
+                    type="date"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    value={formData[header.id] || ""}
+                    onChange={(e) => setFormData({ ...formData, [header.id]: e.target.value })}
+                  />
+                ) : header.id === 'quantity' ? (
+                  <input
+                    type="number"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    value={formData[header.id] || ""}
+                    onChange={(e) => setFormData({ ...formData, [header.id]: e.target.value })}
+                    placeholder={`Enter ${header.label.toLowerCase()}`}
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    value={formData[header.id] || ""}
+                    onChange={(e) => setFormData({ ...formData, [header.id]: e.target.value })}
+                    placeholder={`Enter ${header.label.toLowerCase()}`}
+                  />
+                )}
+              </div>
+            ))}
           </div>
           
           <div className="flex justify-end space-x-3 mt-6">
@@ -907,8 +1179,137 @@ export default function CustomerDeliveryView() {
         }}
         onConfirm={handleDeleteConfirm}
         title="Delete Delivery Notice"
-        message={`Are you sure you want to delete notice "${selectedNotice?.OrderNumber}"? This action cannot be undone.`}
+        message={`Are you sure you want to delete notice "${selectedNotice?.OrderNumber || selectedNotice?.orderId}"? This action cannot be undone.`}
       />
+
+      {/* Header Management Modal */}
+      {showHeaderModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-medium">Manage Table Columns</h3>
+              <button
+                onClick={() => setShowHeaderModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex justify-between items-center mb-4">
+              <p className="text-gray-600">Configure which columns are visible and their order</p>
+              <button
+                onClick={resetHeadersToDefault}
+                className="px-3 py-1 text-sm border border-blue-600 text-blue-600 rounded-md hover:bg-blue-50"
+              >
+                Reset to Default
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {tempHeaders.map((header, index) => (
+                <div
+                  key={header.id}
+                  className={`flex items-center justify-between p-3 border rounded-md ${
+                    index % 2 === 0 ? 'bg-gray-50' : 'bg-white'
+                  }`}
+                >
+                  <div className="flex items-center flex-1">
+                    <div className="w-6 h-6 mr-3 cursor-grab">
+                      <MenuIcon className="w-4 h-4" />
+                    </div>
+                    
+                    {editingHeader === index ? (
+                      <div className="flex items-center space-x-2 flex-1">
+                        <input
+                          value={newHeaderName}
+                          onChange={(e) => setNewHeaderName(e.target.value)}
+                          onKeyPress={(e) => e.key === 'Enter' && saveHeaderLabel()}
+                          className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
+                        />
+                        <button
+                          onClick={saveHeaderLabel}
+                          className="p-1 text-green-600 hover:text-green-800"
+                        >
+                          <Save className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setEditingHeader(null)}
+                          className="p-1 text-gray-400 hover:text-gray-600"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="flex-1 text-sm font-medium">{header.label}</span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => handleEditHeaderLabel(index)}
+                      className="p-1 text-blue-600 hover:text-blue-800"
+                      title="Edit Label"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                    </button>
+
+                    <div className="flex">
+                      <button
+                        onClick={() => moveHeader(index, -1)}
+                        disabled={index === 0}
+                        className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-25"
+                        title="Move Up"
+                      >
+                        <ChevronUp className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => moveHeader(index, 1)}
+                        disabled={index === tempHeaders.length - 1}
+                        className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-25"
+                        title="Move Down"
+                      >
+                        <ChevronDown className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <label className="flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={header.visible}
+                        onChange={() => handleHeaderVisibilityChange(index)}
+                        className="sr-only"
+                      />
+                      <div className={`w-10 h-6 rounded-full relative cursor-pointer transition-colors ${
+                        header.visible ? 'bg-blue-600' : 'bg-gray-300'
+                      }`}>
+                        <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-transform ${
+                          header.visible ? 'translate-x-5' : 'translate-x-1'
+                        }`} />
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-end space-x-3 mt-6">
+              <button
+                onClick={() => setShowHeaderModal(false)}
+                className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveHeaderChanges}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

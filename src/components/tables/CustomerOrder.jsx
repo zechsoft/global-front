@@ -147,6 +147,7 @@ export default function CustomerOrder() {
     }
   }
 
+
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -181,22 +182,9 @@ export default function CustomerOrder() {
     fetchData()
   }, [user])
 
-  useEffect(() => {
-    if (user) {
-      const savedHeaders = localStorage.getItem('customerOrderTableHeaders')
-      if (savedHeaders) {
-        try {
-          setTableHeaders(JSON.parse(savedHeaders))
-        } catch (e) {
-          console.error("Error loading saved headers:", e)
-        }
-      }
-    }
-  }, [user])
-
-  useEffect(() => {
-    localStorage.setItem('customerOrderTableHeaders', JSON.stringify(tableHeaders))
-  }, [tableHeaders])
+useEffect(() => {
+  fetchCustomerOrderHeaders()
+}, [user])
 
   const handleViewDetails = (row) => {
     setSelectedRowDetails(row)
@@ -249,6 +237,54 @@ export default function CustomerOrder() {
       setIsModalOpen(true)
     }
   }
+  const fetchCustomerOrderHeaders = async () => {
+  try {
+    if (!user?.email) {
+      console.warn("No user email found, cannot fetch personalized headers")
+      const savedHeaders = localStorage.getItem('customerOrderTableHeaders')
+      if (savedHeaders) {
+        setTableHeaders(JSON.parse(savedHeaders))
+      } else {
+        setTableHeaders(DEFAULT_HEADERS)
+      }
+      return
+    }
+    
+    const headerResponse = await fetch(
+      `${API_BASE_URL}/api/table-headers/get-customer-order?email=${user.email}`, 
+      { credentials: 'include' }
+    )
+    
+    if (headerResponse.ok) {
+      const data = await headerResponse.json()
+      if (data.headers) {
+        setTableHeaders(data.headers)
+        localStorage.setItem('customerOrderTableHeaders', JSON.stringify(data.headers))
+      } else {
+        const savedHeaders = localStorage.getItem('customerOrderTableHeaders')
+        if (savedHeaders) {
+          setTableHeaders(JSON.parse(savedHeaders))
+        } else {
+          setTableHeaders(DEFAULT_HEADERS)
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Error fetching customer order table headers:", error)
+    const savedHeaders = localStorage.getItem('customerOrderTableHeaders')
+    if (savedHeaders) {
+      try {
+        setTableHeaders(JSON.parse(savedHeaders))
+      } catch (e) {
+        console.error("Error loading saved headers:", e)
+        setTableHeaders(DEFAULT_HEADERS)
+      }
+    } else {
+      setTableHeaders(DEFAULT_HEADERS)
+    }
+  }
+}
+
 
   const handleDeleteRow = (rowId) => {
     setRowToDelete(rowId)
@@ -467,22 +503,44 @@ export default function CustomerOrder() {
     updatedHeaders[index + direction] = temp
     setTempHeaders(updatedHeaders)
   }
-
-  const saveHeaderChanges = async () => {
-    try {
-      if (isAdmin) {
-        showNotification("Table headers updated globally", "All users will see your changes", "success")
-      }
-      
+const saveHeaderChanges = async () => {
+  try {
+    if (!user?.email) {
+      showNotification("User email not available", "", "error")
+      return
+    }
+    
+    const response = await fetch(`${API_BASE_URL}/api/table-headers/update-customer-order`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({ 
+        headers: tempHeaders,
+        email: user.email,
+        isGlobal: isAdmin
+      })
+    })
+    
+    if (response.ok) {
       setTableHeaders(tempHeaders)
       setIsHeaderModalOpen(false)
       localStorage.setItem('customerOrderTableHeaders', JSON.stringify(tempHeaders))
-      
-    } catch (error) {
-      console.error("Error saving header changes:", error)
-      showNotification("Error saving header changes", "", "error")
+      showNotification(
+        isAdmin ? "Customer Order headers updated globally" : "Your table headers have been updated", 
+        isAdmin ? "All users will see your changes" : "", 
+        "success"
+      )
+    } else {
+      const errorData = await response.json()
+      showNotification("Failed to update table headers", errorData.message || "Unknown error", "error")
     }
+  } catch (error) {
+    console.error("Error saving customer order header changes:", error)
+    showNotification("Failed to update table headers", error.message || "Network error", "error")
   }
+}
 
   const deleteHeader = (index) => {
     if (!isAdmin) return
